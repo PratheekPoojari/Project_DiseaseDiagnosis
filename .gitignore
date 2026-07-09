@@ -1,6 +1,7 @@
 venv/
 data/
-models/
+models/*
+!models/.gitkeep
 __pycache__/
 *.pyc
 .ipynb_checkpoints/
