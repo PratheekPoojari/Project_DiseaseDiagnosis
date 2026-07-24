@@ -66,8 +66,8 @@ python3 src/download_data.py
 ## Status
 
 🚧 In active development — Disease Diagnosis is Project 1 of a semester
-coursework series. Current stage: dataset sourced, preprocessing pipeline in
-progress.
+coursework series. Current stage: dataset sourced, preprocessing pipeline
+completed.
 
 ## Limitations
 
@@ -78,5 +78,5 @@ engagement/reminder purposes only.
 
 ## Authors
 
-Pratheek S Poojari — BCA, 5th Semester
-Vivek Kumar Ghosh — BCA, 5th Semeter 
+- Pratheek S Poojari — BCA, 5th Semester
+- Vivek Kumar Ghosh — BCA, 5th Semeter 
