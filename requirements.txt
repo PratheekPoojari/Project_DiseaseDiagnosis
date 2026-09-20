@@ -82,3 +82,8 @@ wikipedia==1.4.0
 streamlit
 SpeechRecognition
 gTTS
+PyPDF2
+python-docx
+reportlab
+apscheduler
+python-dotenv
