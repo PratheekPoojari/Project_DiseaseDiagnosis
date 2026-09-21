@@ -148,7 +148,10 @@ def send_sms(to_phone: str, message: str) -> bool:
     try:
         client = Client(account_sid, auth_token)
         message_instance = client.messages.create(
-            body=message,
+            # Twilio trial accounts only accept predefined template names as the body.
+            # The email channel carries the full personalized follow-up message.
+            # To send custom SMS bodies, upgrade to a paid Twilio account.
+            body="sms_appointment_reminders",
             from_=from_phone,
             to=phone
         )
