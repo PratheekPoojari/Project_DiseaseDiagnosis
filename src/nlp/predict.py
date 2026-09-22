@@ -1,43 +1,61 @@
 """
 File: src/nlp/predict.py
-Purpose: Loads the trained NLP model and sentence encoder, and classifies a given symptom string.
+Purpose: Loads the trained Bio_ClinicalBERT model and classifies a given symptom string.
 Why we need it: This is the inference interface for the NLP branch — used both for 
                 interactive testing and imported by the Fusion Layer in the final app.
 """
 
-import joblib
 import os
 import sys
+import torch
+import torch.nn.functional as F
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
 
-MODEL_PATH   = "models/nlp/svm_tfidf_model.pkl"
-
-# A model with 10 classes that's completely clueless scores ~10% per class.
-# We treat anything below 30% confidence as "uncertain" and warn the user.
+MODEL_PATH = "models/nlp/bio_clinical_bert_v2.pth"
 CONFIDENCE_THRESHOLD = 0.30
+
+# Wrap the model and tokenizer together so load_model() can return a single object
+class NLPModelWrapper:
+    def __init__(self, model, tokenizer, label_map, device):
+        self.model = model
+        self.tokenizer = tokenizer
+        self.label_map = label_map
+        # Invert label map for inference (idx -> string)
+        self.idx_to_label = {v: k for k, v in label_map.items()}
+        self.device = device
 
 
 def load_model():
     """
-    Loads the trained SVM TF-IDF pipeline from disk/cache.
-    Why we need it: The pipeline handles both TF-IDF vectorization and SVM classification internally.
+    Loads the trained PyTorch BERT model and HuggingFace Tokenizer.
     """
     if not os.path.exists(MODEL_PATH):
-        print(f"Error: Model not found at {MODEL_PATH}. Run train_nlp_model.py first.")
+        print(f"Error: Model not found at {MODEL_PATH}.")
         sys.exit(1)
-    model = joblib.load(MODEL_PATH)
-    return model
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
+    # Load the saved dict which contains weights, label map, and model name
+    checkpoint = torch.load(MODEL_PATH, map_location=device, weights_only=False)
+    
+    model_name = checkpoint['model_name']
+    label_map = checkpoint['label_map']
+    
+    # Initialize tokenizer and architecture
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    model = AutoModelForSequenceClassification.from_pretrained(model_name, num_labels=len(label_map))
+    
+    # Load weights and set to eval mode
+    model.load_state_dict(checkpoint['model_state_dict'])
+    model = model.to(device)
+    model.eval()
+    
+    return NLPModelWrapper(model, tokenizer, label_map, device)
 
 
-def predict_symptom(model, text: str) -> dict:
+def predict_symptom(wrapper: NLPModelWrapper, text: str) -> dict:
     """
     Takes a raw symptom string and returns a structured prediction dictionary.
-    Why we need it: Returns a dict (not just a string) so the Fusion Layer can 
-                    directly consume the probability scores alongside the CNN's scores.
-
-    Edge cases handled:
-      - Empty / too short input → returns an error dict
-      - Gibberish / unrelated input → returns a low-confidence warning dict
-      - Valid symptom input → returns top prediction + all class probabilities
     """
     text = text.strip()
 
@@ -50,39 +68,51 @@ def predict_symptom(model, text: str) -> dict:
             "probabilities": None
         }
 
-    # The pipeline handles vectorization internally!
-    probabilities = model.predict_proba([text])[0]
-    classes = model.classes_
+    # Tokenize input
+    encoding = wrapper.tokenizer(
+        text,
+        truncation=True,
+        padding='max_length',
+        max_length=128,
+        return_tensors='pt'
+    )
+    
+    input_ids = encoding['input_ids'].to(wrapper.device)
+    attention_mask = encoding['attention_mask'].to(wrapper.device)
 
+    # Forward pass without gradients
+    with torch.no_grad():
+        outputs = wrapper.model(input_ids=input_ids, attention_mask=attention_mask)
+        logits = outputs.logits
+        # Convert logits to probabilities using Softmax
+        probabilities = F.softmax(logits, dim=1).cpu().numpy()[0]
+
+    # Map probabilities to class names
+    classes = [wrapper.idx_to_label[i] for i in range(len(wrapper.label_map))]
     results = sorted(zip(classes, probabilities), key=lambda x: x[1], reverse=True)
     top_class, top_prob = results[0]
 
-    # Edge Case 2: Low confidence (likely unrelated / gibberish input)
+    # Edge Case 2: Low confidence
     if top_prob < CONFIDENCE_THRESHOLD:
         return {
             "status": "low_confidence",
             "message": f"Low confidence ({top_prob*100:.1f}%). Are these skin-related symptoms?",
             "prediction": top_class,
-            "confidence": top_prob,
+            "confidence": float(top_prob),
             "probabilities": dict(results)
         }
 
-    # Normal case: confident prediction
     return {
         "status": "ok",
         "message": None,
         "prediction": top_class,
-        "confidence": top_prob,
+        "confidence": float(top_prob),
         "probabilities": dict(results)
     }
 
 
 def format_result(result: dict) -> str:
-    """
-    Converts the structured prediction dict into a human-readable string for CLI display.
-    Why we need it: Keeps the predict() function clean and dict-returning (for the Fusion 
-                    Layer), while giving the CLI a nicely formatted output separately.
-    """
+    """Converts the structured prediction dict into a human-readable string for CLI display."""
     if result["status"] == "error":
         return f"Error: {result['message']}"
 
@@ -99,12 +129,10 @@ def format_result(result: dict) -> str:
     return output
 
 
-# ==============================================================================
-# MAIN EXECUTION — Interactive CLI loop
-# ==============================================================================
 if __name__ == "__main__":
-    print("Loading NLP model...")
-    model = load_model()
+    print("Loading BERT NLP model...")
+    wrapper = load_model()
+    print(f"Loaded! Using device: {wrapper.device}")
     print("Ready. Type 'quit' to exit.\n")
 
     while True:
@@ -112,7 +140,7 @@ if __name__ == "__main__":
             user_input = input("Describe your symptoms: ")
             if user_input.lower() in ['quit', 'exit', 'q']:
                 break
-            result = predict_symptom(model, user_input)
+            result = predict_symptom(wrapper, user_input)
             print(f"\n{format_result(result)}\n")
             print("-" * 50)
         except KeyboardInterrupt:
