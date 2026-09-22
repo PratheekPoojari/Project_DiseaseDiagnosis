@@ -11,7 +11,7 @@ INPUT_PATH = os.path.join(BASE_DIR, 'core_clinical_truth.json')
 OUTPUT_PATH = os.path.join(BASE_DIR, 'expanded_symptoms_dataset.csv')
 
 # Target sentences per class
-TARGET = 200
+TARGET = 500
 
 def get_synonyms(word):
     synonyms = set()
