@@ -87,3 +87,7 @@ python-docx
 reportlab
 apscheduler
 python-dotenv
+beautifulsoup4
+requests
+google-genai
+pandas
