@@ -8,6 +8,7 @@ from torch.utils.data import DataLoader
 from torchvision import datasets, transforms, models
 from torchvision.models import ConvNeXt_Base_Weights
 from tqdm import tqdm
+import gc
 
 # ---------------------------------------------------------
 # 1. PATH RESOLUTION (Auto-detects Kaggle Paths)
@@ -31,7 +32,10 @@ data_transforms = {
     'train': transforms.Compose([
         transforms.Resize((236, 236)),
         transforms.RandomCrop(224),
-        transforms.RandAugment(num_ops=2, magnitude=9),
+        transforms.RandomHorizontalFlip(),
+        transforms.RandomVerticalFlip(),
+        transforms.RandomRotation(20),
+        transforms.ColorJitter(brightness=0.1, contrast=0.1, saturation=0.1, hue=0.05),
         transforms.ToTensor(),
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
     ]),
@@ -79,7 +83,7 @@ image_datasets = {
 # ---------------------------------------------------------
 BATCH_SIZE = 64
 
-dataloaders = {x: DataLoader(image_datasets[x], batch_size=BATCH_SIZE, shuffle=(x == 'train'), num_workers=2, pin_memory=True)
+dataloaders = {x: DataLoader(image_datasets[x], batch_size=BATCH_SIZE, shuffle=(x == 'train'), num_workers=0, pin_memory=False)
                for x in ['train', 'val']}
 
 dataset_sizes = {x: len(image_datasets[x]) for x in ['train', 'val']}
@@ -162,18 +166,26 @@ def train_model(model, criterion, optimizer, scheduler, num_epochs=10):
                 # Multiply loss back to get the true running loss
                 current_loss = (loss.item() * accumulation_steps) if phase == 'train' else loss.item()
                 running_loss += current_loss * inputs.size(0)
-                running_corrects += torch.sum(preds == labels.data)
+                running_corrects += torch.sum(preds == labels.data).item()
+                
+                # Force garbage collection of heavy tensors to prevent any creeping leaks
+                del inputs, labels, outputs, preds, loss
 
             if phase == 'train':
                 scheduler.step()
 
             epoch_loss = running_loss / dataset_sizes[phase]
-            epoch_acc = running_corrects.double() / dataset_sizes[phase]
+            epoch_acc = float(running_corrects) / dataset_sizes[phase]
             print(f'{phase.capitalize()} Loss: {epoch_loss:.4f} Acc: {epoch_acc:.4f}')
 
             if phase == 'val' and epoch_acc > best_acc:
                 best_acc = epoch_acc
-                best_model_wts = copy.deepcopy(model.module.state_dict() if isinstance(model, nn.DataParallel) else model.state_dict())
+                # Safely clone weights to CPU to prevent GPU/CPU memory entanglement leaks
+                state = model.module.state_dict() if isinstance(model, nn.DataParallel) else model.state_dict()
+                best_model_wts = {k: v.cpu().clone() for k, v in state.items()}
+
+            # CRITICAL: Force python garbage collector to clear the main thread memory
+            gc.collect()
 
         print()
 
