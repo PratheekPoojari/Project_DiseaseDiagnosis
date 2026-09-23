@@ -13,7 +13,7 @@ from tqdm import tqdm
 # ==========================================
 MODEL_NAME = "emilyalsentzer/Bio_ClinicalBERT"
 NUM_CLASSES = 10
-EPOCHS = 8
+EPOCHS = 15
 LEARNING_RATE = 5e-5
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -90,8 +90,13 @@ def train():
     
     print(f"Training on {train_size} sentences, Validating on {val_size}")
     
-    # Initialize Model
-    model = AutoModelForSequenceClassification.from_pretrained(MODEL_NAME, num_labels=NUM_CLASSES)
+    # Initialize Model with Dropout for regularization
+    model = AutoModelForSequenceClassification.from_pretrained(
+        MODEL_NAME, 
+        num_labels=NUM_CLASSES,
+        hidden_dropout_prob=0.2,
+        attention_probs_dropout_prob=0.2
+    )
     
     # Wrap in DataParallel if multiple GPUs are available (like Kaggle T4x2)
     if torch.cuda.device_count() > 1:
@@ -100,8 +105,8 @@ def train():
         
     model = model.to(device)
     
-    # We remove weight_decay to let the model fully memorize the synthetic patterns
-    optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE)
+    # Add weight_decay to penalize large weights and prevent overfitting
+    optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=0.01)
     
     # We keep the scheduler but reduce warmup so it reaches max LR faster
     from transformers import get_linear_schedule_with_warmup
@@ -113,6 +118,9 @@ def train():
     
     best_val_acc = 0.0
     best_model_wts = copy.deepcopy(model.module.state_dict() if isinstance(model, nn.DataParallel) else model.state_dict())
+    
+    patience = 3
+    epochs_no_improve = 0
 
     for epoch in range(EPOCHS):
         model.train()
@@ -182,6 +190,12 @@ def train():
         if epoch_val_acc > best_val_acc:
             best_val_acc = epoch_val_acc
             best_model_wts = copy.deepcopy(model.module.state_dict() if isinstance(model, nn.DataParallel) else model.state_dict())
+            epochs_no_improve = 0
+        else:
+            epochs_no_improve += 1
+            if epochs_no_improve >= patience:
+                print(f"Early stopping triggered! No improvement for {patience} epochs.")
+                break
         
     print(f"\nTraining Complete! Best Val Acc: {best_val_acc:.4f}")
     # Save the model state and the label mapping so we can decode predictions later
