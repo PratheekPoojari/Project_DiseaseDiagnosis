@@ -29,14 +29,19 @@ def load_model():
     """
     Loads the trained PyTorch BERT model and HuggingFace Tokenizer.
     """
-    if not os.path.exists(MODEL_PATH):
-        print(f"Error: Model not found at {MODEL_PATH}.")
-        sys.exit(1)
+    model_path = MODEL_PATH
+    if not os.path.exists(model_path):
+        alt_path = "models/nlp/bio_clinical_bert_frozen.pth"
+        if os.path.exists(alt_path):
+            model_path = alt_path
+        else:
+            print(f"Error: Model not found at {MODEL_PATH} (or {alt_path}).")
+            sys.exit(1)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     # Load the saved dict which contains weights, label map, and model name
-    checkpoint = torch.load(MODEL_PATH, map_location=device, weights_only=False)
+    checkpoint = torch.load(model_path, map_location=device, weights_only=False)
     
     model_name = checkpoint['model_name']
     label_map = checkpoint['label_map']
