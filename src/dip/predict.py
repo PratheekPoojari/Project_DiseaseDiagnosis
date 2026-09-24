@@ -15,7 +15,7 @@ from torchvision.models import ConvNeXt_Base_Weights
 from PIL import Image
 
 MODEL_PATH = "models/dip/convnext_base_skin_v2.pth"
-CONFIDENCE_THRESHOLD = 0.30
+CONFIDENCE_THRESHOLD = 0.40
 
 # This mapping ensures the messy Kaggle folder names are converted to clean class names 
 # that perfectly match the NLP output dictionary for the Fusion Layer.
@@ -32,9 +32,9 @@ CLEAN_MAPPING = {
     "9. Tinea Ringworm Candidiasis and other Fungal Infections - 1.7k": "Fungal Infections"
 }
 
-# The identical validation transforms used in training
+# The identical validation transforms used in training (Resize 232 preserves aspect ratio)
 val_transforms = transforms.Compose([
-    transforms.Resize((236, 236)),
+    transforms.Resize(232, interpolation=transforms.InterpolationMode.BILINEAR),
     transforms.CenterCrop(224),
     transforms.ToTensor(),
     transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
@@ -54,9 +54,9 @@ def load_model():
     checkpoint = torch.load(MODEL_PATH, map_location=device, weights_only=False)
     class_names = checkpoint['class_names']
     
-    # Initialize ConvNeXt architecture
-    weights = ConvNeXt_Base_Weights.DEFAULT
-    model = models.convnext_base(weights=weights)
+    # Initialize ConvNeXt architecture without downloading external weights
+    # (checkpoint contains all 344 layer weights trained on Kaggle)
+    model = models.convnext_base(weights=None)
     
     # Replace the final classification layer to match our 10 classes
     num_ftrs = model.classifier[2].in_features
@@ -94,9 +94,10 @@ def predict_image(model, class_names, device, image_path: str) -> dict:
             # Convert logits to probabilities using Softmax
             probabilities = F.softmax(outputs, dim=1).cpu().numpy()[0]
             
-        # Map raw Kaggle class names to clean names using our mapping dictionary
+        # Map raw Kaggle class names to clean names with native Python floats for JSON serialization
         clean_classes = [CLEAN_MAPPING.get(c, c) for c in class_names]
-        results = sorted(zip(clean_classes, probabilities), key=lambda x: x[1], reverse=True)
+        prob_dict = {cls: float(p) for cls, p in zip(clean_classes, probabilities)}
+        results = sorted(prob_dict.items(), key=lambda x: x[1], reverse=True)
         top_class, top_prob = results[0]
 
         if top_prob < CONFIDENCE_THRESHOLD:

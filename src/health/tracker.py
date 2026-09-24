@@ -30,6 +30,9 @@ def save_diagnosis(user_id: int, result: dict, symptom_text: str, image_used: bo
     """
     conn = get_connection()
     try:
+        raw_probs = result.get("probabilities", {}) or {}
+        sanitized_probs = {str(k): float(v) for k, v in raw_probs.items()}
+
         conn.execute(
             """INSERT INTO diagnosis_history
                (user_id, prediction, confidence, probabilities, symptom_text, image_used)
@@ -37,8 +40,8 @@ def save_diagnosis(user_id: int, result: dict, symptom_text: str, image_used: bo
             (
                 user_id,
                 result.get("prediction", "unknown"),
-                result.get("confidence", 0.0),
-                json.dumps(result.get("probabilities", {})),
+                float(result.get("confidence", 0.0)),
+                json.dumps(sanitized_probs),
                 symptom_text.strip() if symptom_text else "",
                 1 if image_used else 0,
             )

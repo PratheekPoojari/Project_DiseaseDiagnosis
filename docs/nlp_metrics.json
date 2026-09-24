@@ -1,0 +1,75 @@
+{
+  "Atopic Dermatitis": {
+    "precision": 0.7703703703703704,
+    "recall": 0.8455284552845529,
+    "f1-score": 0.8062015503875969,
+    "support": 123.0
+  },
+  "Basal Cell Carcinoma": {
+    "precision": 0.7769230769230769,
+    "recall": 0.8632478632478633,
+    "f1-score": 0.8178137651821862,
+    "support": 117.0
+  },
+  "Benign Keratosis-like Lesions": {
+    "precision": 0.7964601769911505,
+    "recall": 0.7758620689655172,
+    "f1-score": 0.7860262008733624,
+    "support": 116.0
+  },
+  "Eczema": {
+    "precision": 0.8214285714285714,
+    "recall": 0.7796610169491526,
+    "f1-score": 0.8,
+    "support": 118.0
+  },
+  "Fungal Infections": {
+    "precision": 0.8103448275862069,
+    "recall": 0.7768595041322314,
+    "f1-score": 0.7932489451476793,
+    "support": 121.0
+  },
+  "Melanocytic Nevi": {
+    "precision": 0.8362068965517241,
+    "recall": 0.751937984496124,
+    "f1-score": 0.7918367346938775,
+    "support": 129.0
+  },
+  "Melanoma": {
+    "precision": 0.6346153846153846,
+    "recall": 0.8181818181818182,
+    "f1-score": 0.7148014440433214,
+    "support": 121.0
+  },
+  "Psoriasis Lichen Planus": {
+    "precision": 0.90625,
+    "recall": 0.7767857142857143,
+    "f1-score": 0.8365384615384616,
+    "support": 112.0
+  },
+  "Seborrheic Keratoses": {
+    "precision": 0.8512396694214877,
+    "recall": 0.7984496124031008,
+    "f1-score": 0.824,
+    "support": 129.0
+  },
+  "Viral Infections": {
+    "precision": 0.8285714285714286,
+    "recall": 0.7631578947368421,
+    "f1-score": 0.7945205479452054,
+    "support": 114.0
+  },
+  "accuracy": 0.795,
+  "macro avg": {
+    "precision": 0.8032410402459401,
+    "recall": 0.7949671932682917,
+    "f1-score": 0.796498764981169,
+    "support": 1200.0
+  },
+  "weighted avg": {
+    "precision": 0.8028762025493168,
+    "recall": 0.795,
+    "f1-score": 0.7963422721258189,
+    "support": 1200.0
+  }
+}

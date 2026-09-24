@@ -39,6 +39,9 @@ def _build_report_content(result: dict, symptom_text: str) -> dict:
     flat structure ready for any format renderer to consume.
     Why we need it: Avoids duplicating parsing logic in every export function.
     """
+    from src.fusion.narrative import generate_specialist_narrative
+    narrative = generate_specialist_narrative(result, symptom_text)
+
     clean_name = result.get("prediction", "Unknown").replace("_", " ").title()
     confidence = result.get("confidence", 0.0) * 100
     status = result.get("status", "unknown")
@@ -50,11 +53,20 @@ def _build_report_content(result: dict, symptom_text: str) -> dict:
 
     return {
         "prediction": clean_name,
+        "formal_name": narrative["formal_name"],
+        "category": narrative["category"],
+        "urgency": narrative["urgency"],
+        "certainty_label": narrative["certainty_label"],
         "confidence": f"{confidence:.2f}%",
         "status": status,
         "symptom_text": symptom_text.strip() if symptom_text else "Not provided",
         "timestamp": _format_datetime(),
         "probabilities": formatted_probs,
+        "lead_paragraph": narrative["lead_paragraph"],
+        "visual_findings": narrative["visual_findings"],
+        "differential_analysis": narrative["differential_analysis"],
+        "clinical_actions": narrative["clinical_actions"],
+        "red_flags": narrative.get("red_flags", []),
     }
 
 
@@ -71,37 +83,66 @@ def export_txt(result: dict, symptom_text: str) -> bytes:
     """
     data = _build_report_content(result, symptom_text)
     lines = [
-        "=" * 60,
-        "  MULTIMODAL SKIN DISEASE DIAGNOSIS REPORT",
-        "=" * 60,
+        "=" * 70,
+        "  MULTIMODAL SKIN DISEASE DIAGNOSIS REPORT (SPECIALIST CONSULTATION)",
+        "=" * 70,
         f"  Generated: {data['timestamp']}",
         "",
         "DISCLAIMER: This report is for academic/demonstrative purposes",
         "only. It does not replace professional medical consultation.",
         "",
-        "-" * 60,
+        "-" * 70,
         "PATIENT INPUT",
-        "-" * 60,
+        "-" * 70,
         f"Symptoms: {data['symptom_text']}",
         "",
-        "-" * 60,
-        "DIAGNOSIS RESULT",
-        "-" * 60,
-        f"Predicted Condition : {data['prediction']}",
-        f"Confidence          : {data['confidence']}",
-        f"Status              : {data['status'].replace('_', ' ').title()}",
+        "-" * 70,
+        "DIAGNOSTIC SUMMARY",
+        "-" * 70,
+        f"Primary Indication : {data['formal_name']}",
+        f"Taxonomy Category  : {data['category']}",
+        f"Diagnostic Certainty: {data['confidence']} ({data['certainty_label']})",
+        f"Triage Advisory    : {data['urgency']}",
+        f"System Status      : {data['status'].replace('_', ' ').title()}",
         "",
-        "-" * 60,
-        "CLASS PROBABILITIES (Highest to Lowest)",
-        "-" * 60,
+        "-" * 70,
+        "SPECIALIST CONSULTATION ASSESSMENT",
+        "-" * 70,
+        data['lead_paragraph'].replace("**", ""),
+        "",
+        "OBSERVED CLINICAL & MORPHOLOGICAL INDICATORS:",
     ]
+    for finding in data["visual_findings"]:
+        lines.append(f"  • {finding}")
+
+    lines.append("")
+    lines.append("DIFFERENTIAL DIAGNOSIS CONSIDERATIONS:")
+    lines.append(f"  {data['differential_analysis']}")
+
+    lines.append("")
+    lines.append("RECOMMENDED CLINICAL NEXT STEPS:")
+    for i, action in enumerate(data["clinical_actions"], 1):
+        lines.append(f"  {i}. {action}")
+
+    if data.get("red_flags"):
+        lines.append("")
+        lines.append("RED-FLAG SYMPTOMS REQUIRING IMMEDIATE EMERGENCY CARE:")
+        for rf in data["red_flags"]:
+            lines.append(f"  🚨 {rf}")
+
+    lines.extend([
+        "",
+        "-" * 70,
+        "CLASS PROBABILITIES (Highest to Lowest)",
+        "-" * 70,
+    ])
     for condition, prob in data["probabilities"]:
-        lines.append(f"  {condition:<40} {prob}")
+        lines.append(f"  {condition:<45} {prob}")
     lines += [
         "",
-        "=" * 60,
-        "  Please consult a qualified dermatologist for diagnosis.",
-        "=" * 60,
+        "=" * 70,
+        "  Please consult a qualified dermatologist for a confirmed diagnosis.",
+        "=" * 70,
     ]
     return "\n".join(lines).encode("utf-8")
 
@@ -126,7 +167,14 @@ def export_csv(result: dict, symptom_text: str) -> bytes:
     writer.writerow(["Generated", data["timestamp"]])
     writer.writerow(["Symptoms", data["symptom_text"]])
     writer.writerow(["Predicted Condition", data["prediction"]])
-    writer.writerow(["Confidence", data["confidence"]])
+    writer.writerow(["Primary Indication", data["formal_name"]])
+    writer.writerow(["Taxonomy Category", data["category"]])
+    writer.writerow(["Diagnostic Certainty", data["confidence"]])
+    writer.writerow(["Certainty Level", data["certainty_label"]])
+    writer.writerow(["Triage Advisory", data["urgency"]])
+    writer.writerow(["Specialist Assessment", data["lead_paragraph"].replace("**", "")])
+    writer.writerow(["Differential Notes", data["differential_analysis"]])
+    writer.writerow(["Recommended Actions", "; ".join(data["clinical_actions"])])
     writer.writerow(["Status", data["status"].replace("_", " ").title()])
     writer.writerow([])
 
@@ -219,29 +267,47 @@ def export_pdf(result: dict, symptom_text: str) -> bytes:
     story.append(Spacer(1, 6))
 
     # --- Diagnosis Result ---
-    story.append(Paragraph("Diagnosis Result", section_heading_style))
+    story.append(Paragraph("Diagnostic Summary", section_heading_style))
     result_table_data = [
         ["Field", "Value"],
-        ["Predicted Condition", data["prediction"]],
-        ["Confidence", data["confidence"]],
-        ["Status", data["status"].replace("_", " ").title()],
+        ["Primary Indication", data["formal_name"]],
+        ["Taxonomy Category", data["category"]],
+        ["Diagnostic Certainty", f"{data['confidence']} ({data['certainty_label']})"],
+        ["Triage Advisory", data["urgency"]],
+        ["System Status", data["status"].replace("_", " ").title()],
     ]
-    result_table = Table(result_table_data, colWidths=[60 * mm, 110 * mm])
+    result_table = Table(result_table_data, colWidths=[55 * mm, 115 * mm])
     result_table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1E88E5")),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTSIZE", (0, 0), (-1, 0), 10),
+        ("FONTSIZE", (0, 0), (-1, 0), 9),
         ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.HexColor("#F5F5F5"), colors.white]),
-        ("FONTSIZE", (0, 1), (-1, -1), 10),
+        ("FONTSIZE", (0, 1), (-1, -1), 9),
         ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#BDBDBD")),
-        ("LEFTPADDING", (0, 0), (-1, -1), 8),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-        ("TOPPADDING", (0, 0), (-1, -1), 5),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
     ]))
     story.append(result_table)
-    story.append(Spacer(1, 10))
+    story.append(Spacer(1, 8))
+
+    # --- Specialist Consultation Assessment ---
+    story.append(Paragraph("Specialist Consultation Assessment", section_heading_style))
+    story.append(Paragraph(data["lead_paragraph"].replace("**", ""), body_style))
+    story.append(Spacer(1, 4))
+
+    # Observed Indicators & Recommended Actions
+    story.append(Paragraph("<b>Observed Morphological Indicators:</b>", body_style))
+    for finding in data["visual_findings"]:
+        story.append(Paragraph(f"• {finding}", body_style))
+    story.append(Spacer(1, 4))
+
+    story.append(Paragraph("<b>Recommended Clinical Next Steps:</b>", body_style))
+    for i, action in enumerate(data["clinical_actions"], 1):
+        story.append(Paragraph(f"{i}. {action}", body_style))
+    story.append(Spacer(1, 8))
 
     # --- Class Probabilities ---
     story.append(Paragraph("Class Probabilities", section_heading_style))
@@ -251,14 +317,14 @@ def export_pdf(result: dict, symptom_text: str) -> bytes:
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1565C0")),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTSIZE", (0, 0), (-1, 0), 10),
+        ("FONTSIZE", (0, 0), (-1, 0), 9),
         ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.HexColor("#E3F2FD"), colors.white]),
-        ("FONTSIZE", (0, 1), (-1, -1), 10),
+        ("FONTSIZE", (0, 1), (-1, -1), 9),
         ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#BDBDBD")),
-        ("LEFTPADDING", (0, 0), (-1, -1), 8),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-        ("TOPPADDING", (0, 0), (-1, -1), 5),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
     ]))
     story.append(prob_table)
 
@@ -315,13 +381,16 @@ def export_docx(result: dict, symptom_text: str) -> bytes:
     p.runs[0].font.size = Pt(10)
 
     # --- Diagnosis Result ---
-    doc.add_heading("Diagnosis Result", level=2)
-    result_table = doc.add_table(rows=4, cols=2)
+    doc.add_heading("Diagnostic Summary", level=2)
+    headers = [
+        ("Primary Indication", data["formal_name"]),
+        ("Taxonomy Category", data["category"]),
+        ("Diagnostic Certainty", f"{data['confidence']} ({data['certainty_label']})"),
+        ("Triage Advisory", data["urgency"]),
+        ("System Status", data["status"].replace("_", " ").title())
+    ]
+    result_table = doc.add_table(rows=len(headers) + 1, cols=2)
     result_table.style = "Table Grid"
-
-    headers = [("Predicted Condition", data["prediction"]),
-               ("Confidence", data["confidence"]),
-               ("Status", data["status"].replace("_", " ").title())]
 
     # Header row
     hdr_cells = result_table.rows[0].cells
@@ -337,6 +406,23 @@ def export_docx(result: dict, symptom_text: str) -> bytes:
         row_cells = result_table.rows[i + 1].cells
         row_cells[0].text = field
         row_cells[1].text = value
+
+    doc.add_paragraph()  # Spacer
+
+    # --- Specialist Consultation Assessment ---
+    doc.add_heading("Specialist Consultation Assessment", level=2)
+    p_lead = doc.add_paragraph(data["lead_paragraph"].replace("**", ""))
+    p_lead.runs[0].font.size = Pt(10)
+
+    doc.add_heading("Observed Morphological Indicators", level=3)
+    for finding in data["visual_findings"]:
+        p_f = doc.add_paragraph(f"• {finding}")
+        p_f.runs[0].font.size = Pt(10)
+
+    doc.add_heading("Recommended Clinical Next Steps", level=3)
+    for i, action in enumerate(data["clinical_actions"], 1):
+        p_a = doc.add_paragraph(f"{i}. {action}")
+        p_a.runs[0].font.size = Pt(10)
 
     doc.add_paragraph()  # Spacer
 

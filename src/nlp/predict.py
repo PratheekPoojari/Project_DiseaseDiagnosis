@@ -11,8 +11,8 @@ import torch
 import torch.nn.functional as F
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 
-MODEL_PATH = "models/nlp/bio_clinical_bert_v2.pth"
-CONFIDENCE_THRESHOLD = 0.30
+MODEL_PATH = "models/nlp/bio_clinical_bert_frozen.pth"
+CONFIDENCE_THRESHOLD = 0.40
 
 # Wrap the model and tokenizer together so load_model() can return a single object
 class NLPModelWrapper:
@@ -46,9 +46,13 @@ def load_model():
     model_name = checkpoint['model_name']
     label_map = checkpoint['label_map']
     
-    # Initialize tokenizer and architecture
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    model = AutoModelForSequenceClassification.from_pretrained(model_name, num_labels=len(label_map))
+    # Initialize tokenizer and architecture (try local cache first for offline resilience)
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(model_name, local_files_only=True)
+        model = AutoModelForSequenceClassification.from_pretrained(model_name, num_labels=len(label_map), local_files_only=True)
+    except Exception:
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
+        model = AutoModelForSequenceClassification.from_pretrained(model_name, num_labels=len(label_map))
     
     # Load weights and set to eval mode
     model.load_state_dict(checkpoint['model_state_dict'])
@@ -92,9 +96,10 @@ def predict_symptom(wrapper: NLPModelWrapper, text: str) -> dict:
         # Convert logits to probabilities using Softmax
         probabilities = F.softmax(logits, dim=1).cpu().numpy()[0]
 
-    # Map probabilities to class names
+    # Map probabilities to class names with native Python floats for JSON serialization
     classes = [wrapper.idx_to_label[i] for i in range(len(wrapper.label_map))]
-    results = sorted(zip(classes, probabilities), key=lambda x: x[1], reverse=True)
+    prob_dict = {cls: float(p) for cls, p in zip(classes, probabilities)}
+    results = sorted(prob_dict.items(), key=lambda x: x[1], reverse=True)
     top_class, top_prob = results[0]
 
     # Edge Case 2: Low confidence

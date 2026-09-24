@@ -164,29 +164,75 @@ def send_sms(to_phone: str, message: str) -> bool:
 
 
 # ==============================================================================
+# WHATSAPP — Twilio WhatsApp Business API
+# ==============================================================================
+
+def send_whatsapp(to_phone: str, message: str) -> bool:
+    """
+    Sends a WhatsApp message via the Twilio WhatsApp API.
+    Requires .env variables:
+        TWILIO_ACCOUNT_SID
+        TWILIO_AUTH_TOKEN
+        TWILIO_WHATSAPP_NUMBER (default: whatsapp:+14155238886 for Twilio sandbox)
+    """
+    account_sid = os.getenv("TWILIO_ACCOUNT_SID")
+    auth_token = os.getenv("TWILIO_AUTH_TOKEN")
+    whatsapp_from = os.getenv("TWILIO_WHATSAPP_NUMBER", "whatsapp:+14155238886")
+
+    if not account_sid or not auth_token:
+        logging.warning("WhatsApp not configured. Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN in .env")
+        return False
+
+    if not whatsapp_from.startswith("whatsapp:"):
+        whatsapp_from = f"whatsapp:{whatsapp_from}"
+
+    phone = to_phone.strip()
+    if phone.startswith("0"):
+        phone = phone[1:]
+    if not phone.startswith("+"):
+        if phone.startswith("91") and len(phone) == 12:
+            phone = "+" + phone
+        elif len(phone) == 10:
+            phone = "+91" + phone
+        else:
+            phone = "+" + phone
+
+    whatsapp_to = f"whatsapp:{phone}"
+
+    try:
+        client = Client(account_sid, auth_token)
+        message_instance = client.messages.create(
+            body=message,
+            from_=whatsapp_from,
+            to=whatsapp_to
+        )
+        logging.info(f"WhatsApp sent to {whatsapp_to}. SID: {message_instance.sid}")
+        return True
+
+    except Exception as e:
+        logging.error(f"Twilio WhatsApp send failed to {whatsapp_to}: {e}")
+        return False
+
+
+# ==============================================================================
 # NOTIFICATION MESSAGE BUILDERS
 # ==============================================================================
 
 def _build_followup_message(user_name: str, condition: str, day: int) -> tuple[str, str]:
     """
-    Builds the subject and body for a follow-up notification.
-    Why we need it: Consistent, friendly message templates rather than
-                    ad-hoc strings scattered throughout the scheduler.
-
-    Returns (subject, body) tuple.
+    Builds the subject and body for a follow-up email notification.
     """
     condition_clean = condition.replace("_", " ").title()
     subject = f"[Skin Diagnosis] Day-{day} Follow-Up: {condition_clean}"
     body = (
         f"Hello {user_name},\n\n"
-        f"This is your Day-{day} follow-up reminder from the Skin Disease Diagnosis System.\n\n"
-        f"Your last diagnosed condition was: {condition_clean}\n\n"
-        f"Please open the app and run a new diagnosis to track whether your condition "
-        f"has improved, stayed the same, or worsened. Early detection of changes can "
-        f"make a significant difference in treatment outcomes.\n\n"
-        f"Reminder: This system is for academic/demonstrative purposes only. "
-        f"Always consult a qualified dermatologist for a confirmed diagnosis.\n\n"
-        f"— Skin Diagnosis System"
+        f"This is your scheduled Day-{day} follow-up check-in from the Skin Disease Diagnosis System.\n\n"
+        f"Your evaluated condition was: {condition_clean}\n\n"
+        f"Please inspect the affected skin area: has the lesion improved, remained stable, or worsened? "
+        f"You can log back into the app at any time to run a follow-up screening and check your longitudinal health trend.\n\n"
+        f"Reminder: This automated system is for demonstrative/academic purposes only. "
+        f"Always consult a qualified dermatologist for clinical evaluation and prescription treatment.\n\n"
+        f"— Multimodal Skin Disease Diagnosis System"
     )
     return subject, body
 
@@ -195,14 +241,68 @@ def _build_sms_message(user_name: str, condition: str, day: int) -> str:
     """Builds a concise SMS body for a follow-up reminder."""
     condition_clean = condition.replace("_", " ").title()
     return (
-        f"Hi {user_name}, Day-{day} reminder: Open the Skin Diagnosis app to "
-        f"check your {condition_clean} progress. Consult a doctor for medical advice."
+        f"Hi {user_name}, Day-{day} reminder: Check your {condition_clean} progress "
+        f"in the Skin Diagnosis app. Consult a dermatologist for confirmed medical guidance."
+    )
+
+
+def _build_whatsapp_message(user_name: str, condition: str, day: int) -> str:
+    """Builds a structured WhatsApp reminder message."""
+    condition_clean = condition.replace("_", " ").title()
+    return (
+        f"🩺 *Skin Disease Diagnosis — Day {day} Follow-Up*\n\n"
+        f"Hello *{user_name}*,\n\n"
+        f"This is your Day-{day} check-in regarding your recent evaluation for *{condition_clean}*.\n\n"
+        f"• *Action:* Check your affected skin area.\n"
+        f"• *Has it changed?* Note any change in size, border, redness, or itching.\n"
+        f"• *App Tracker:* Log into the portal anytime to test again and view your 5-session health trend.\n\n"
+        f"⚠️ _Academic Screening Notice: Always seek in-person medical care from a licensed dermatologist._"
     )
 
 
 # ==============================================================================
-# SCHEDULER
+# SCHEDULER (DAYS 3, 7, 14, 21, 30 + DAY 1 IN DEMO MODE)
 # ==============================================================================
+
+FOLLOWUP_SCHEDULE_DAYS = [3, 7, 14, 21, 30]
+DEMO_SCHEDULE_DAYS = [1, 3, 7, 14, 21, 30]
+
+
+def trigger_immediate_test_notification(
+    user_name: str,
+    email: str,
+    phone: str,
+    condition: str = "Fungal Infection"
+) -> dict:
+    """
+    Synchronously triggers an immediate test follow-up across Email, SMS, and WhatsApp.
+    Returns status and diagnostic messages for all three channels.
+    """
+    subject, email_body = _build_followup_message(user_name, condition, 1)
+    sms_body = _build_sms_message(user_name, condition, 1)
+    whatsapp_body = _build_whatsapp_message(user_name, condition, 1)
+
+    # 1. Email via Gmail SMTP
+    email_ok = send_email(email, subject, email_body)
+    email_msg = f"Delivered to {email}" if email_ok else "Failed: Check EMAIL_ADDRESS and EMAIL_APP_PASSWORD in .env"
+
+    # 2. SMS via Twilio
+    sms_ok = send_sms(phone, sms_body)
+    sms_msg = f"Delivered to {phone}" if sms_ok else "Failed: Ensure recipient phone is verified in your Twilio Console"
+
+    # 3. WhatsApp via Twilio
+    wa_ok = send_whatsapp(phone, whatsapp_body)
+    wa_msg = f"Delivered to WhatsApp {phone}" if wa_ok else "Twilio Trial: Recipient must join Twilio sandbox by sending 'join <sandbox-code>' to +1 415 523 8886, or requires approved ContentSid."
+
+    return {
+        "email": email_ok,
+        "email_msg": email_msg,
+        "sms": sms_ok,
+        "sms_msg": sms_msg,
+        "whatsapp": wa_ok,
+        "whatsapp_msg": wa_msg
+    }
+
 
 def schedule_followup(
     user_id: int,
@@ -212,17 +312,11 @@ def schedule_followup(
     condition: str,
 ) -> None:
     """
-    Schedules two follow-up notifications after a diagnosis:
-        - Day 3 (or 3 × DEMO_INTERVAL_SECONDS seconds in demo mode)
-        - Day 7 (or 7 × DEMO_INTERVAL_SECONDS seconds in demo mode)
+    Schedules follow-up notifications after diagnosis:
+        - Normal Mode: Days 3, 7, 14, 21, 30
+        - Demo Mode: Days 1, 3, 7, 14, 21, 30 (Day 1 fires after 1 x DEMO_INTERVAL_SECONDS)
 
-    Each notification fires both an email and an SMS.
-    Why we need it: The project synopsis specifies time-delayed post-prediction
-                    follow-ups. APScheduler's DateTrigger lets us fire a one-shot
-                    job at an exact future datetime.
-
-    Jobs are tagged with user_id so existing jobs can be replaced if the user
-    runs another diagnosis before the previous reminders have fired.
+    At each checkpoint, one Email, one SMS, and one WhatsApp message are dispatched.
     """
     scheduler = get_scheduler()
 
@@ -232,31 +326,35 @@ def schedule_followup(
             existing_job.remove()
 
     now = datetime.utcnow()
+    target_days = DEMO_SCHEDULE_DAYS if DEMO_MODE else FOLLOWUP_SCHEDULE_DAYS
 
     if DEMO_MODE:
         intervals = {
-            3: now + timedelta(seconds=3 * DEMO_INTERVAL_SECONDS),
-            7: now + timedelta(seconds=7 * DEMO_INTERVAL_SECONDS),
+            day: now + timedelta(seconds=day * DEMO_INTERVAL_SECONDS)
+            for day in target_days
         }
-        mode_label = f"DEMO ({DEMO_INTERVAL_SECONDS}s units)"
+        mode_label = f"DEMO ({DEMO_INTERVAL_SECONDS}s per day unit; Day 1 fires at {DEMO_INTERVAL_SECONDS}s)"
     else:
         intervals = {
-            3: now + timedelta(days=3),
-            7: now + timedelta(days=7),
+            day: now + timedelta(days=day)
+            for day in target_days
         }
-        mode_label = "NORMAL (day units)"
+        mode_label = "NORMAL (Day units: 3, 7, 14, 21, 30)"
 
     for day, fire_at in intervals.items():
         subject, email_body = _build_followup_message(user_name, condition, day)
         sms_body = _build_sms_message(user_name, condition, day)
+        whatsapp_body = _build_whatsapp_message(user_name, condition, day)
 
         # Capture loop variables in default args to avoid closure pitfall
         def _send_notification(
             _email=email, _phone=phone,
-            _subject=subject, _email_body=email_body, _sms_body=sms_body
+            _subject=subject, _email_body=email_body,
+            _sms_body=sms_body, _whatsapp_body=whatsapp_body
         ):
             send_email(_email, _subject, _email_body)
             send_sms(_phone, _sms_body)
+            send_whatsapp(_phone, _whatsapp_body)
 
         scheduler.add_job(
             func=_send_notification,
@@ -267,5 +365,5 @@ def schedule_followup(
         )
 
     logging.info(
-        f"Scheduled Day-3 and Day-7 follow-ups for user {user_id} | Mode: {mode_label}"
+        f"Scheduled follow-ups (Email + SMS + WhatsApp) for user {user_id} | Mode: {mode_label}"
     )

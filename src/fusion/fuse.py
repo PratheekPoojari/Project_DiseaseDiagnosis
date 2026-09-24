@@ -9,6 +9,8 @@ Why we need it: A multimodal system requires a way to weigh and merge decisions.
                 correctly output Psoriasis).
 """
 
+CONFIDENCE_THRESHOLD = 0.40
+
 def fuse_predictions(text_result: dict = None, image_result: dict = None, 
                      weight_image: float = 0.6, weight_text: float = 0.4) -> dict:
     """
@@ -65,7 +67,7 @@ def fuse_predictions(text_result: dict = None, image_result: dict = None,
 
     # Check if the combined confidence is critically low
     status = "ok"
-    if top_prob < 0.30:
+    if top_prob < CONFIDENCE_THRESHOLD:
         status = "low_confidence"
 
     return {
