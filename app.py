@@ -261,27 +261,154 @@ if st.session_state["user"] is None:
                 key="su_gender",
             )
 
-            # Password taskbar row: label on the left, live strength badge at the end of the taskbar
-            pw_bar_l, pw_bar_r = st.columns([1, 1])
-            curr_pass = st.session_state.get("su_pass", "")
-            pw_score, pw_label, pw_color = check_password_strength(curr_pass) if curr_pass else (0, "Not Entered", "gray")
-
-            with pw_bar_l:
-                st.markdown("**Password ***")
-            with pw_bar_r:
-                st.markdown(
-                    f"<div style='text-align:right;'><span id='pw_live_badge' style='font-size:12px; font-weight:700; "
-                    f"color:{pw_color}; border:1px solid {pw_color}; border-radius:4px; padding:2px 8px;'>"
-                    f"Strength: {pw_label}</span></div>",
-                    unsafe_allow_html=True
-                )
-
-            st.caption(
-                "Guidelines: Minimum 8 characters with uppercase, lowercase, numbers, and symbols."
-            )
+            # Password input with direct inline guidance
             su_pass = st.text_input(
-                "Password *", type="password", label_visibility="collapsed",
+                "Password *",
+                type="password",
                 key="su_pass",
+                placeholder="Enter password (min 8 chars)",
+                help="Requires minimum 8 characters with uppercase, lowercase, numbers, and symbols."
+            )
+
+            # Graphical 4-segment live password strength meter & client-side zero-lag tracker
+            curr_pass = st.session_state.get("su_pass", "")
+            pw_score, pw_label, pw_color = check_password_strength(curr_pass) if curr_pass else (0, "Not Entered", "#888")
+
+            # Initial styling based on server state
+            bar_colors = ["#333", "#333", "#333", "#333"]
+            if pw_score == 1 or pw_score == 2:
+                bar_colors = ["#ef4444", "#ef4444", "#333", "#333"]
+            elif pw_score == 3:
+                bar_colors = ["#f59e0b", "#f59e0b", "#f59e0b", "#333"]
+            elif pw_score >= 4:
+                bar_colors = ["#10b981", "#10b981", "#10b981", "#10b981"]
+
+            st.markdown(
+                f"""
+                <div id="pw-meter-wrap" style="margin-top:-6px; margin-bottom:14px; background:#181b20; padding:10px 12px; border-radius:8px; border:1px solid #2d333b;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                        <span style="font-size:12px; font-weight:600; color:#c9d1d9;">Password Strength</span>
+                        <span id="pw-badge" style="font-size:11px; font-weight:700; color:{pw_color}; border:1px solid {pw_color}; border-radius:4px; padding:2px 8px;">
+                            {pw_label}
+                        </span>
+                    </div>
+                    <div style="display:flex; gap:4px; height:6px; margin-bottom:8px;">
+                        <div id="pw-bar-1" style="flex:1; border-radius:3px; background:{bar_colors[0]}; transition:background 0.2s ease;"></div>
+                        <div id="pw-bar-2" style="flex:1; border-radius:3px; background:{bar_colors[1]}; transition:background 0.2s ease;"></div>
+                        <div id="pw-bar-3" style="flex:1; border-radius:3px; background:{bar_colors[2]}; transition:background 0.2s ease;"></div>
+                        <div id="pw-bar-4" style="flex:1; border-radius:3px; background:{bar_colors[3]}; transition:background 0.2s ease;"></div>
+                    </div>
+                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:4px; font-size:11px; color:#8b949e;">
+                        <span id="hint-len">{'✔' if len(curr_pass)>=8 else '○'} 8+ characters</span>
+                        <span id="hint-case">{'✔' if (re.search(r'[a-z]', curr_pass) and re.search(r'[A-Z]', curr_pass)) else '○'} Upper & lower case</span>
+                        <span id="hint-num">{'✔' if re.search(r'\d', curr_pass) else '○'} Number (0-9)</span>
+                        <span id="hint-sym">{'✔' if re.search(r'[!@#$%^&*()_+\-=\[\]{}|;:,.<>?/~`]', curr_pass) else '○'} Special symbol</span>
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+            # Client-side listener to update password strength with 0ms lag as the user types
+            import streamlit.components.v1 as components
+            components.html(
+                """
+                <script>
+                function attachPasswordWatcher() {
+                    const doc = window.parent.document;
+                    if (!doc) return;
+                    // Find all password inputs
+                    const inputs = doc.querySelectorAll('input[type="password"]');
+                    if (!inputs || inputs.length === 0) return;
+                    
+                    // The first password input is su_pass
+                    const pwInput = inputs[0];
+                    if (pwInput.dataset.watcherAttached) return;
+                    pwInput.dataset.watcherAttached = "true";
+
+                    const badge = doc.getElementById('pw-badge');
+                    const bar1 = doc.getElementById('pw-bar-1');
+                    const bar2 = doc.getElementById('pw-bar-2');
+                    const bar3 = doc.getElementById('pw-bar-3');
+                    const bar4 = doc.getElementById('pw-bar-4');
+                    const hintLen = doc.getElementById('hint-len');
+                    const hintCase = doc.getElementById('hint-case');
+                    const hintNum = doc.getElementById('hint-num');
+                    const hintSym = doc.getElementById('hint-sym');
+
+                    pwInput.addEventListener('input', function(e) {
+                        const val = e.target.value || "";
+                        if (!badge || !bar1) return;
+
+                        if (val.length === 0) {
+                            badge.textContent = "Not Entered";
+                            badge.style.color = "#888";
+                            badge.style.borderColor = "#444";
+                            [bar1, bar2, bar3, bar4].forEach(b => b.style.background = "#333");
+                            if (hintLen) hintLen.innerHTML = "○ 8+ characters";
+                            if (hintCase) hintCase.innerHTML = "○ Upper & lower case";
+                            if (hintNum) hintNum.innerHTML = "○ Number (0-9)";
+                            if (hintSym) hintSym.innerHTML = "○ Special symbol";
+                            return;
+                        }
+
+                        const hasLen = val.length >= 8;
+                        const hasLower = /[a-z]/.test(val);
+                        const hasUpper = /[A-Z]/.test(val);
+                        const hasNum = /\\d/.test(val);
+                        const hasSym = /[!@#$%^&*()_+\\-=\\[\\]{}|;:,.<>?/~`]/.test(val);
+
+                        let score = 0;
+                        if (hasLen) score += 1;
+                        if (hasLower && hasUpper) score += 1;
+                        if (hasNum) score += 1;
+                        if (hasSym) score += 1;
+
+                        if (hintLen) hintLen.innerHTML = (hasLen ? "<span style='color:#10b981'>✔ 8+ characters</span>" : "○ 8+ characters");
+                        if (hintCase) hintCase.innerHTML = ((hasLower && hasUpper) ? "<span style='color:#10b981'>✔ Upper & lower case</span>" : "○ Upper & lower case");
+                        if (hintNum) hintNum.innerHTML = (hasNum ? "<span style='color:#10b981'>✔ Number (0-9)</span>" : "○ Number (0-9)");
+                        if (hintSym) hintSym.innerHTML = (hasSym ? "<span style='color:#10b981'>✔ Special symbol</span>" : "○ Special symbol");
+
+                        if (score <= 1) {
+                            badge.textContent = "Weak 🔴";
+                            badge.style.color = "#ef4444";
+                            badge.style.borderColor = "#ef4444";
+                            bar1.style.background = "#ef4444";
+                            bar2.style.background = "#333";
+                            bar3.style.background = "#333";
+                            bar4.style.background = "#333";
+                        } else if (score === 2) {
+                            badge.textContent = "Medium 🟡";
+                            badge.style.color = "#f59e0b";
+                            badge.style.borderColor = "#f59e0b";
+                            bar1.style.background = "#f59e0b";
+                            bar2.style.background = "#f59e0b";
+                            bar3.style.background = "#333";
+                            bar4.style.background = "#333";
+                        } else if (score === 3) {
+                            badge.textContent = "Good 🟢";
+                            badge.style.color = "#84cc16";
+                            badge.style.borderColor = "#84cc16";
+                            bar1.style.background = "#84cc16";
+                            bar2.style.background = "#84cc16";
+                            bar3.style.background = "#84cc16";
+                            bar4.style.background = "#333";
+                        } else {
+                            badge.textContent = "Strong 💪";
+                            badge.style.color = "#10b981";
+                            badge.style.borderColor = "#10b981";
+                            bar1.style.background = "#10b981";
+                            bar2.style.background = "#10b981";
+                            bar3.style.background = "#10b981";
+                            bar4.style.background = "#10b981";
+                        }
+                    });
+                }
+                setTimeout(attachPasswordWatcher, 200);
+                setTimeout(attachPasswordWatcher, 800);
+                </script>
+                """,
+                height=0,
             )
 
             su_pass2 = st.text_input(

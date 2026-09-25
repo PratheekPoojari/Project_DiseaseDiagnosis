@@ -1,0 +1,82 @@
+{
+  "model_architecture": "ConvNeXt-Base (88M params)",
+  "training_environment": "Kaggle 2x NVIDIA Tesla T4 DDP",
+  "best_epoch": 9,
+  "best_val_accuracy": 0.896539027982327,
+  "evaluated_sample_size": 1000,
+  "classification_report": {
+    "Eczema": {
+      "precision": 0.8586956521739131,
+      "recall": 0.79,
+      "f1-score": 0.8229166666666666,
+      "support": 100.0
+    },
+    "Viral Infections": {
+      "precision": 0.8163265306122449,
+      "recall": 0.8,
+      "f1-score": 0.8080808080808081,
+      "support": 100.0
+    },
+    "Melanoma": {
+      "precision": 0.3968253968253968,
+      "recall": 1.0,
+      "f1-score": 0.5681818181818182,
+      "support": 100.0
+    },
+    "Atopic Dermatitis": {
+      "precision": 0.6614173228346457,
+      "recall": 0.84,
+      "f1-score": 0.7400881057268722,
+      "support": 100.0
+    },
+    "Basal Cell Carcinoma": {
+      "precision": 0.9701492537313433,
+      "recall": 0.65,
+      "f1-score": 0.7784431137724551,
+      "support": 100.0
+    },
+    "Melanocytic Nevi": {
+      "precision": 1.0,
+      "recall": 0.06,
+      "f1-score": 0.11320754716981132,
+      "support": 100.0
+    },
+    "Benign Keratosis-like Lesions": {
+      "precision": 0.8974358974358975,
+      "recall": 0.35,
+      "f1-score": 0.5035971223021583,
+      "support": 100.0
+    },
+    "Psoriasis Lichen Planus": {
+      "precision": 0.7304347826086957,
+      "recall": 0.84,
+      "f1-score": 0.7813953488372093,
+      "support": 100.0
+    },
+    "Seborrheic Keratoses": {
+      "precision": 0.7033898305084746,
+      "recall": 0.83,
+      "f1-score": 0.7614678899082569,
+      "support": 100.0
+    },
+    "Fungal Infections": {
+      "precision": 0.9534883720930233,
+      "recall": 0.82,
+      "f1-score": 0.8817204301075269,
+      "support": 100.0
+    },
+    "accuracy": 0.698,
+    "macro avg": {
+      "precision": 0.7988163038823635,
+      "recall": 0.6980000000000001,
+      "f1-score": 0.6759098850753583,
+      "support": 1000.0
+    },
+    "weighted avg": {
+      "precision": 0.7988163038823635,
+      "recall": 0.698,
+      "f1-score": 0.6759098850753581,
+      "support": 1000.0
+    }
+  }
+}
