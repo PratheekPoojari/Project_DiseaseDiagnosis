@@ -10,6 +10,7 @@ Why we need it: A multimodal system requires a way to weigh and merge decisions.
 """
 
 CONFIDENCE_THRESHOLD = 0.40
+MARGIN_THRESHOLD = 0.10
 
 def fuse_predictions(text_result: dict = None, image_result: dict = None, 
                      weight_image: float = 0.6, weight_text: float = 0.4) -> dict:
@@ -64,17 +65,25 @@ def fuse_predictions(text_result: dict = None, image_result: dict = None,
     # 4. Find the winning class after fusion
     sorted_fused = sorted(fused_probabilities.items(), key=lambda x: x[1], reverse=True)
     top_class, top_prob = sorted_fused[0]
+    second_prob = sorted_fused[1][1] if len(sorted_fused) > 1 else 0.0
+    margin = top_prob - second_prob
 
-    # Check if the combined confidence is critically low
+    # Check if the combined confidence is critically low or ambiguous
     status = "ok"
+    message = "Fused Prediction (60% Image / 40% Text)"
     if top_prob < CONFIDENCE_THRESHOLD:
         status = "low_confidence"
+        message = "Low confidence even after fusion."
+    elif margin < MARGIN_THRESHOLD:
+        status = "inconclusive"
+        message = "No distinct lesion pattern could be isolated. Predictions are too closely divided."
 
     return {
         "status": status,
-        "message": "Fused Prediction (60% Image / 40% Text)" if status == "ok" else "Low confidence even after fusion.",
+        "message": message,
         "prediction": top_class,
         "confidence": top_prob,
+        "margin": float(margin),
         "probabilities": fused_probabilities,
         "source": "multimodal_fusion"
     }

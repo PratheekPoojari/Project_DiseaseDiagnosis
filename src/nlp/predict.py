@@ -13,6 +13,7 @@ from transformers import AutoTokenizer, AutoModelForSequenceClassification
 
 MODEL_PATH = "models/nlp/bio_clinical_bert_frozen.pth"
 CONFIDENCE_THRESHOLD = 0.40
+MARGIN_THRESHOLD = 0.10
 
 # Wrap the model and tokenizer together so load_model() can return a single object
 class NLPModelWrapper:
@@ -101,6 +102,8 @@ def predict_symptom(wrapper: NLPModelWrapper, text: str) -> dict:
     prob_dict = {cls: float(p) for cls, p in zip(classes, probabilities)}
     results = sorted(prob_dict.items(), key=lambda x: x[1], reverse=True)
     top_class, top_prob = results[0]
+    second_prob = results[1][1] if len(results) > 1 else 0.0
+    margin = top_prob - second_prob
 
     # Edge Case 2: Low confidence
     if top_prob < CONFIDENCE_THRESHOLD:
@@ -109,6 +112,18 @@ def predict_symptom(wrapper: NLPModelWrapper, text: str) -> dict:
             "message": f"Low confidence ({top_prob*100:.1f}%). Are these skin-related symptoms?",
             "prediction": top_class,
             "confidence": float(top_prob),
+            "margin": float(margin),
+            "probabilities": dict(results)
+        }
+
+    # Edge Case 3: Inconclusive / ambiguous margin
+    if margin < MARGIN_THRESHOLD:
+        return {
+            "status": "inconclusive",
+            "message": "No distinct symptom pattern could be isolated. Predictions are too closely divided.",
+            "prediction": top_class,
+            "confidence": float(top_prob),
+            "margin": float(margin),
             "probabilities": dict(results)
         }
 
@@ -117,6 +132,7 @@ def predict_symptom(wrapper: NLPModelWrapper, text: str) -> dict:
         "message": None,
         "prediction": top_class,
         "confidence": float(top_prob),
+        "margin": float(margin),
         "probabilities": dict(results)
     }
 
@@ -129,6 +145,11 @@ def format_result(result: dict) -> str:
     if result["status"] == "low_confidence":
         return (f"Warning: {result['message']}\n"
                 f"Best guess: {result['prediction'].upper()}")
+
+    if result["status"] == "inconclusive":
+        return (f"Warning: {result['message']}\n"
+                f"Top candidate: {result['prediction'].upper()} ({result['confidence']*100:.2f}%), "
+                f"margin: {result.get('margin', 0.0)*100:.2f}%")
 
     top3 = list(result["probabilities"].items())[:3]
     output = f"Prediction: {result['prediction'].upper()} "

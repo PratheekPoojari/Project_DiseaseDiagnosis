@@ -386,7 +386,10 @@ def generate_specialist_narrative(
     kb = CLINICAL_KNOWLEDGE_BASE[matched_key]
 
     # Qualitative certainty tier
-    if confidence >= 0.85:
+    if status == "inconclusive":
+        certainty_label = "Inconclusive (Split Prediction)"
+        confidence_tone = "with high diagnostic ambiguity (predictions too closely divided)"
+    elif confidence >= 0.85:
         certainty_label = "Strong Indication"
         confidence_tone = "with high statistical certainty"
     elif confidence >= 0.60:
@@ -416,14 +419,25 @@ def generate_specialist_narrative(
         )
 
     # 1. Lead Paragraph (Specialist Doctor Tone)
-    lead_paragraph = (
-        f"Based on our algorithmic assessment, the primary diagnostic finding is "
-        f"**{kb['formal_name']}**, evaluated at **{conf_pct}** confidence ({certainty_label}). "
-        f"{modality_phrase} {kb['overview']} "
-        f"In this analysis, the AI model identified distinctive patterns characteristic of this condition {confidence_tone}. "
-        f"Please bear in mind that this assessment represents an automated screening tool; definitive confirmation "
-        f"always requires a hands-on clinical examination by a qualified dermatologist."
-    )
+    if status == "inconclusive":
+        lead_paragraph = (
+            f"The algorithmic assessment for this case is **Inconclusive**. While the model identified "
+            f"**{kb['formal_name']}** as the top numerical candidate at **{conf_pct}** confidence, "
+            f"the statistical margin separating the top predictions is narrower than the 10% clinical safety threshold. "
+            f"No distinct lesion pattern could be isolated. Predictions are too closely divided between candidate conditions. "
+            f"{modality_phrase} "
+            f"This frequently occurs when photographing healthy non-lesion skin, poorly illuminated areas, or diffuse erythema. "
+            f"A direct physical examination by a medical professional or a clearer macro photograph is advised."
+        )
+    else:
+        lead_paragraph = (
+            f"Based on our algorithmic assessment, the primary diagnostic finding is "
+            f"**{kb['formal_name']}**, evaluated at **{conf_pct}** confidence ({certainty_label}). "
+            f"{modality_phrase} {kb['overview']} "
+            f"In this analysis, the AI model identified distinctive patterns characteristic of this condition {confidence_tone}. "
+            f"Please bear in mind that this assessment represents an automated screening tool; definitive confirmation "
+            f"always requires a hands-on clinical examination by a qualified dermatologist."
+        )
 
     # 2. Differential Analysis
     sorted_probs = sorted(probs.items(), key=lambda x: x[1], reverse=True)
@@ -447,22 +461,33 @@ def generate_specialist_narrative(
         )
 
     # 3. Audio/TTS Script (Natural spoken doctor dialogue)
-    tts_script = (
-        f"Hello. Our system has completed its multimodal analysis. "
-        f"The primary clinical pattern identified is {matched_key}, with a confidence of {confidence*100:.0f} percent. "
-        f"This condition is classified under {kb['category']}. "
-        f"Our visual and symptom analysis detected hallmark indicators corresponding to this presentation. "
-        f"We recommend scheduling a clinical consultation for direct dermatological evaluation. "
-        f"Please consult a certified physician before starting or altering any medication."
-    )
+    if status == "inconclusive":
+        tts_script = (
+            f"Hello. Our system has analyzed the input, but the findings are inconclusive. "
+            f"No distinct lesion pattern could be isolated, and predictions were too closely divided. "
+            f"Please ensure a focused macro photograph of the affected area is provided, or consult a medical professional."
+        )
+    else:
+        tts_script = (
+            f"Hello. Our system has completed its multimodal analysis. "
+            f"The primary clinical pattern identified is {matched_key}, with a confidence of {confidence*100:.0f} percent. "
+            f"This condition is classified under {kb['category']}. "
+            f"Our visual and symptom analysis detected hallmark indicators corresponding to this presentation. "
+            f"We recommend scheduling a clinical consultation for direct dermatological evaluation. "
+            f"Please consult a certified physician before starting or altering any medication."
+        )
+
+    badge_color = "#E65100" if status == "inconclusive" else kb["badge_color"]
+    badge_bg = "#FFF3E0" if status == "inconclusive" else kb["badge_bg"]
+    urgency = "Diagnostic Ambiguity — Inconclusive Screening (Repeat or In-Person Clinical Exam)" if status == "inconclusive" else kb["urgency"]
 
     return {
         "condition_name": matched_key,
         "formal_name": kb["formal_name"],
         "category": kb["category"],
-        "urgency": kb["urgency"],
-        "badge_color": kb["badge_color"],
-        "badge_bg": kb["badge_bg"],
+        "urgency": urgency,
+        "badge_color": badge_color,
+        "badge_bg": badge_bg,
         "confidence_str": conf_pct,
         "certainty_label": certainty_label,
         "lead_paragraph": lead_paragraph,

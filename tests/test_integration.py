@@ -122,8 +122,20 @@ def run_tests():
     fused_multimodal = fuse_predictions(text_result=res_nlp, image_result=res_dip, weight_image=0.6, weight_text=0.4)
     assert fused_multimodal["status"] == "ok"
     assert fused_multimodal["prediction"] is not None
+    assert fused_multimodal["margin"] >= 0.10, "Expected clear winning margin"
     assert fused_multimodal["source"] == "multimodal_fusion"
-    print(f"  ✅ Live Multimodal Fusion passed: Combined '{res_dip['prediction']}' (DIP) + '{res_nlp['prediction']}' (NLP) -> Winner: {fused_multimodal['prediction']} ({fused_multimodal['confidence']*100:.2f}%)")
+    print(f"  ✅ Live Multimodal Fusion passed: Combined '{res_dip['prediction']}' (DIP) + '{res_nlp['prediction']}' (NLP) -> Winner: {fused_multimodal['prediction']} ({fused_multimodal['confidence']*100:.2f}%, margin: {fused_multimodal['margin']*100:.2f}%)")
+
+    # Inconclusive / Ambiguity margin gating verification
+    ambig_fused = fuse_predictions(
+        text_result={"status": "ok", "probabilities": {"Eczema": 0.45, "Atopic Dermatitis": 0.44}},
+        image_result={"status": "ok", "probabilities": {"Eczema": 0.44, "Atopic Dermatitis": 0.45}},
+        weight_image=0.5,
+        weight_text=0.5
+    )
+    assert ambig_fused["status"] == "inconclusive", f"Expected 'inconclusive', got {ambig_fused['status']}"
+    assert ambig_fused["margin"] < 0.10, f"Expected margin < 0.10, got {ambig_fused['margin']}"
+    print(f"  ✅ Margin Gating passed: Caught ambiguous draw ({ambig_fused['margin']*100:.2f}% < 10.0%) as 'inconclusive'")
 
     # 5. Auth & Database
     print("\n[5/7] Testing SQLite Schema & User Authentication...")

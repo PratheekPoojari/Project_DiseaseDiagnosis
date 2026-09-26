@@ -16,6 +16,7 @@ from PIL import Image
 
 MODEL_PATH = "models/dip/convnext_base_skin_v2.pth"
 CONFIDENCE_THRESHOLD = 0.40
+MARGIN_THRESHOLD = 0.10
 
 # This mapping ensures the messy Kaggle folder names are converted to clean class names 
 # that perfectly match the NLP output dictionary for the Fusion Layer.
@@ -99,6 +100,8 @@ def predict_image(model, class_names, device, image_path: str) -> dict:
         prob_dict = {cls: float(p) for cls, p in zip(clean_classes, probabilities)}
         results = sorted(prob_dict.items(), key=lambda x: x[1], reverse=True)
         top_class, top_prob = results[0]
+        second_prob = results[1][1] if len(results) > 1 else 0.0
+        margin = top_prob - second_prob
 
         if top_prob < CONFIDENCE_THRESHOLD:
             return {
@@ -106,6 +109,17 @@ def predict_image(model, class_names, device, image_path: str) -> dict:
                 "message": f"Low confidence ({top_prob*100:.1f}%). Image might be unclear or unrelated.",
                 "prediction": top_class,
                 "confidence": float(top_prob),
+                "margin": float(margin),
+                "probabilities": dict(results)
+            }
+
+        if margin < MARGIN_THRESHOLD:
+            return {
+                "status": "inconclusive",
+                "message": "No distinct lesion pattern could be isolated. Predictions are too closely divided.",
+                "prediction": top_class,
+                "confidence": float(top_prob),
+                "margin": float(margin),
                 "probabilities": dict(results)
             }
 
@@ -114,6 +128,7 @@ def predict_image(model, class_names, device, image_path: str) -> dict:
             "message": None,
             "prediction": top_class,
             "confidence": float(top_prob),
+            "margin": float(margin),
             "probabilities": dict(results)
         }
         
@@ -134,6 +149,11 @@ def format_result(result: dict) -> str:
     if result["status"] == "low_confidence":
         return (f"Warning: {result['message']}\n"
                 f"Best guess: {result['prediction']}")
+
+    if result["status"] == "inconclusive":
+        return (f"Warning: {result['message']}\n"
+                f"Top candidate: {result['prediction']} ({result['confidence']*100:.2f}%), "
+                f"margin: {result.get('margin', 0.0)*100:.2f}%")
 
     top3 = list(result["probabilities"].items())[:3]
     output = f"Prediction: {result['prediction']} "

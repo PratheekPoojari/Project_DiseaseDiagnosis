@@ -860,7 +860,9 @@ if diagnosis is not None:
         else:
             st.info(f"ℹ️ **Clinical Triage Advisory:** {narrative['urgency']}")
 
-        if diagnosis["status"] == "low_confidence":
+        if diagnosis["status"] == "inconclusive":
+            st.warning("⚠️ **Inconclusive Lesion Analysis:** No distinct lesion pattern could be isolated. Predictions are too closely divided (top margin < 10%). Please ensure the camera is focused directly on a localized skin abnormality.")
+        elif diagnosis["status"] == "low_confidence":
             st.warning("⚠️ **Low Statistical Concordance:** Clinical presentation does not cleanly align with single-disease benchmarks. Consider secondary differentials below.")
 
         # ---- Specialist Consultation Narrative Container ----
