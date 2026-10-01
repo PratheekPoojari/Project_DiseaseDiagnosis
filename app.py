@@ -651,6 +651,7 @@ if st.session_state.get("phone_verify_pending") and st.session_state.get("user")
                     st.session_state["phone_verify_otp_sent"]      = False
                     st.session_state["otp_send_attempts"]          = 0
                     st.session_state["otp_first_attempt_time"]     = None
+                    time.sleep(1)
                     st.rerun()
                 else:
                     st.error(f"❌ {verify_res['message']}")

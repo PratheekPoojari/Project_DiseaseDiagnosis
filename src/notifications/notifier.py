@@ -108,7 +108,7 @@ from twilio.rest import Client
 # SMS — Twilio Trial API
 # ==============================================================================
 
-def send_sms(to_phone: str, message: str) -> bool:
+def send_sms(to_phone: str, message: str) -> tuple[bool, str]:
     """
     Sends an SMS via the Twilio API.
     Why we need it: SMS is a secondary notification channel — more immediate
@@ -118,34 +118,30 @@ def send_sms(to_phone: str, message: str) -> bool:
         TWILIO_ACCOUNT_SID
         TWILIO_AUTH_TOKEN
         TWILIO_PHONE_NUMBER — the Twilio sender number
-        
-    Note: On a Twilio trial account, you can only send messages to the phone 
-    number you verified during signup.
 
-    Returns True on success, False on failure.
+    Trial account restriction:
+        Twilio trial accounts can only send to numbers manually added to
+        Verified Caller IDs in the Twilio Console. Adding numbers programmatically
+        requires a verification voice call (blocked on trial, Error 10002).
+        Add numbers at: console.twilio.com/us1/develop/phone-numbers/manage/verified
+
+    Returns:
+        (True, "") on success
+        (False, reason_string) on failure
     """
     account_sid = os.getenv("TWILIO_ACCOUNT_SID")
     auth_token = os.getenv("TWILIO_AUTH_TOKEN")
     from_phone = os.getenv("TWILIO_PHONE_NUMBER")
 
     if not account_sid or not auth_token or not from_phone:
-        logging.warning("SMS not configured. Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER in .env")
-        return False
+        msg = "SMS not configured. Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER in .env"
+        logging.warning(msg)
+        return False, msg
 
-    # Ensure phone number is E.164 format (starts with + and country code)
-    phone = to_phone.strip()
-    if phone.startswith("0"):
-        phone = phone[1:]
-    if not phone.startswith("+"):
-        if phone.startswith("91") and len(phone) == 12:
-            phone = "+" + phone
-        elif len(phone) == 10:
-            phone = "+91" + phone
-        else:
-            # Fallback for unexpected formats
-            phone = "+" + phone
+    phone = _normalize_e164(to_phone)
 
     try:
+        from twilio.base.exceptions import TwilioRestException
         client = Client(account_sid, auth_token)
         message_instance = client.messages.create(
             body=message,
@@ -153,11 +149,32 @@ def send_sms(to_phone: str, message: str) -> bool:
             to=phone
         )
         logging.info(f"SMS sent to {phone}. SID: {message_instance.sid}")
-        return True
+        return True, ""
 
     except Exception as e:
-        logging.error(f"Twilio SMS send failed to {phone}: {e}")
-        return False
+        err_str = str(e)
+        err_code = getattr(e, "code", None)
+
+        if err_code == 572002:
+            reason = (
+                f"Twilio trial restriction: {phone} is not in your Verified Caller IDs. "
+                f"Add it manually at console.twilio.com/us1/develop/phone-numbers/manage/verified"
+            )
+        elif err_code == 572006:
+            reason = (
+                f"Twilio trial restriction: Free-form SMS bodies require DLT template registration "
+                f"for Indian (+91) numbers. Use predefined templates or upgrade your Twilio account."
+            )
+        elif err_code == 21608:
+            reason = (
+                f"Twilio trial restriction: {phone} is unverified. "
+                f"Add it to Verified Caller IDs in the Twilio Console."
+            )
+        else:
+            reason = f"Twilio error {err_code}: {err_str}"
+
+        logging.error(f"Twilio SMS send failed to {phone}: {reason}")
+        return False, reason
 
 
 # ==============================================================================
@@ -307,8 +324,8 @@ def trigger_immediate_test_notification(
     email_msg = f"Delivered to {email}" if email_ok else "Failed: Check EMAIL_ADDRESS and EMAIL_APP_PASSWORD in .env"
 
     # 2. SMS via Twilio (semi-automatic — requires one-time phone OTP verification at signup)
-    sms_ok = send_sms(phone, sms_body)
-    sms_msg = f"Delivered to {phone}" if sms_ok else "Failed: Ensure recipient phone was verified via OTP during signup"
+    sms_ok, sms_reason = send_sms(phone, sms_body)
+    sms_msg = f"Delivered to {phone}" if sms_ok else f"Failed: {sms_reason}"
 
     # 3. WhatsApp — Future Scope
     wa_ok = False
@@ -640,23 +657,14 @@ def is_phone_verified(phone: str) -> bool:
     if not account_sid or not auth_token:
         return False
 
-    phone = phone.strip()
-    if phone.startswith("0"):
-        phone = phone[1:]
-    if not phone.startswith("+"):
-        if phone.startswith("91") and len(phone) == 12:
-            phone = "+" + phone
-        elif len(phone) == 10:
-            phone = "+91" + phone
-        else:
-            phone = "+" + phone
+    norm_phone = _normalize_e164(phone)
 
     try:
         client = Client(account_sid, auth_token)
         caller_ids = [item.phone_number for item in client.outgoing_caller_ids.list()]
-        return phone in caller_ids
+        return norm_phone in caller_ids
     except Exception as e:
-        logging.error(f"Error checking caller ID verification for {phone}: {e}")
+        logging.error(f"Error checking caller ID verification for {norm_phone}: {e}")
         return False
 
 
