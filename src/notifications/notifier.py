@@ -434,108 +434,133 @@ def purge_orphaned_followup_jobs() -> None:
 # TWILIO TRIAL HELPERS — Phone Verification & WhatsApp Sandbox
 # ==============================================================================
 
+def _normalize_e164(phone: str) -> str:
+    """Converts a 10-digit Indian number or partial E.164 to full E.164 (+91XXXXXXXXXX)."""
+    clean = phone.strip()
+    if clean.startswith("0"):
+        clean = clean[1:]
+    if not clean.startswith("+"):
+        if clean.startswith("91") and len(clean) == 12:
+            clean = "+" + clean
+        elif len(clean) == 10:
+            clean = "+91" + clean
+        else:
+            clean = "+" + clean
+    return clean
+
+
 def send_verification_otp(phone: str, channel: str = "sms") -> dict:
     """
-    Generates and dispatches a 6-digit OTP to the user's phone via SMS or initiates
-    an automated voice call. Handles Twilio Trial account constraints transparently.
+    Sends a phone verification OTP via the Twilio Verify API.
+
+    Uses Twilio Verify (client.verify.v2.services) instead of client.messages.create
+    because Verify:
+      - Works on Twilio Free Trial accounts without Verified Caller ID restrictions
+      - Uses Twilio-managed message templates (bypasses Error 572006 template restriction)
+      - Does NOT require the recipient number to be pre-registered on the account
+      - Handles its own OTP lifecycle (generation, expiry, rate limiting)
+
+    The generated OTP is NOT returned — Twilio owns it. Verification happens by calling
+    check_verification_otp() which submits the user-entered code to Twilio for validation.
 
     Args:
         phone: 10-digit Indian number or international E.164 string.
-        channel: 'sms' (SMS OTP) or 'call' (Automated IVR call).
+        channel: 'sms' only (voice call removed — not supported on trial accounts).
 
     Returns:
         {
             "success": bool,
-            "code": str,             # 6-digit OTP
-            "channel": str,          # 'sms' or 'call'
-            "trial_restricted": bool,# True if blocked by Twilio Free Trial limits
-            "message": str           # Descriptive human-readable result
+            "code": None,            # Twilio Verify owns the OTP — we never see it
+            "channel": str,
+            "trial_restricted": bool,
+            "message": str
         }
     """
-    import random
-    otp = f"{random.randint(100000, 999999)}"
+    account_sid   = os.getenv("TWILIO_ACCOUNT_SID")
+    auth_token    = os.getenv("TWILIO_AUTH_TOKEN")
+    service_sid   = os.getenv("TWILIO_VERIFY_SERVICE_SID")
 
-    # Normalize phone to E.164
-    clean_phone = phone.strip()
-    if clean_phone.startswith("0"):
-        clean_phone = clean_phone[1:]
-    if not clean_phone.startswith("+"):
-        if clean_phone.startswith("91") and len(clean_phone) == 12:
-            clean_phone = "+" + clean_phone
-        elif len(clean_phone) == 10:
-            clean_phone = "+91" + clean_phone
-        else:
-            clean_phone = "+" + clean_phone
-
-    if channel == "sms":
-        msg = f"Your Skin Disease Diagnosis System verification OTP is {otp}. Valid for 10 minutes."
-        sms_sent = send_sms(clean_phone, msg)
-        if sms_sent:
-            return {
-                "success": True,
-                "code": otp,
-                "channel": "sms",
-                "trial_restricted": False,
-                "message": f"Verification SMS successfully sent to {clean_phone}."
-            }
-        else:
-            # Twilio trial accounts cannot send SMS to unverified numbers.
-            return {
-                "success": False,
-                "code": otp,
-                "channel": "sms",
-                "trial_restricted": True,
-                "message": (
-                    f"Twilio Free Trial restriction: Outbound SMS to unverified numbers is restricted. "
-                    f"To deliver live SMS to {clean_phone}, add it to your Twilio Console under Verified Caller IDs."
-                )
-            }
-
-    elif channel == "call":
-        account_sid = os.getenv("TWILIO_ACCOUNT_SID")
-        auth_token  = os.getenv("TWILIO_AUTH_TOKEN")
-        if not account_sid or not auth_token:
-            return {
-                "success": False,
-                "code": otp,
-                "channel": "call",
-                "trial_restricted": False,
-                "message": "Twilio credentials missing in .env."
-            }
-        try:
-            client = Client(account_sid, auth_token)
-            val = client.validation_requests.create(
-                phone_number=clean_phone,
-                friendly_name=f"Skin Diagnosis - {clean_phone}"
-            )
-            return {
-                "success": True,
-                "code": val.validation_code,
-                "channel": "call",
-                "trial_restricted": False,
-                "message": f"Twilio verification call initiated to {clean_phone}. Enter code on phone keypad."
-            }
-        except Exception as e:
-            err_str = str(e)
-            is_trial = "trial accounts" in err_str.lower() or "10002" in err_str
-            return {
-                "success": False,
-                "code": otp,
-                "channel": "call",
-                "trial_restricted": is_trial,
-                "message": (
-                    "Twilio Free Trial restriction: Placing automated verification calls via API is not supported on trial accounts. Please use SMS OTP."
-                    if is_trial else f"Call failed: {err_str}"
-                )
-            }
-    else:
+    if not account_sid or not auth_token or not service_sid:
         return {
             "success": False,
-            "code": otp,
+            "code": None,
             "channel": channel,
             "trial_restricted": False,
-            "message": f"Unsupported channel: {channel}"
+            "message": "Twilio Verify not configured. Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_VERIFY_SERVICE_SID in .env."
         }
+
+    clean_phone = _normalize_e164(phone)
+
+    try:
+        client = Client(account_sid, auth_token)
+        verification = client.verify.v2.services(service_sid).verifications.create(
+            to=clean_phone,
+            channel="sms"      # always SMS for now; voice call future scope
+        )
+        logging.info(f"Twilio Verify OTP sent to {clean_phone}. Status: {verification.status}")
+        return {
+            "success": True,
+            "code": None,          # Twilio owns the OTP
+            "channel": "sms",
+            "trial_restricted": False,
+            "message": f"Verification code sent via SMS to {clean_phone}. Enter it below."
+        }
+
+    except Exception as e:
+        err_str = str(e)
+        logging.error(f"Twilio Verify send failed to {clean_phone}: {err_str}")
+        return {
+            "success": False,
+            "code": None,
+            "channel": "sms",
+            "trial_restricted": False,
+            "message": f"Failed to send OTP: {err_str}"
+        }
+
+
+def check_verification_otp(phone: str, code: str) -> dict:
+    """
+    Verifies a user-submitted OTP code against the Twilio Verify service.
+
+    Twilio Verify manages OTP expiry (10 minutes) and invalid-attempt tracking
+    automatically. We simply submit the code and get approved/denied back.
+
+    Args:
+        phone: The phone number that received the OTP (E.164 or 10-digit Indian).
+        code: The 6-digit code the user typed in.
+
+    Returns:
+        {
+            "approved": bool,
+            "message": str
+        }
+    """
+    account_sid = os.getenv("TWILIO_ACCOUNT_SID")
+    auth_token  = os.getenv("TWILIO_AUTH_TOKEN")
+    service_sid = os.getenv("TWILIO_VERIFY_SERVICE_SID")
+
+    if not account_sid or not auth_token or not service_sid:
+        return {"approved": False, "message": "Twilio Verify not configured."}
+
+    clean_phone = _normalize_e164(phone)
+
+    try:
+        client = Client(account_sid, auth_token)
+        check = client.verify.v2.services(service_sid).verification_checks.create(
+            to=clean_phone,
+            code=code.strip()
+        )
+        approved = (check.status == "approved")
+        logging.info(f"Verify check for {clean_phone}: {check.status}")
+        return {
+            "approved": approved,
+            "message": "Phone verified successfully." if approved else "Incorrect or expired code."
+        }
+
+    except Exception as e:
+        err_str = str(e)
+        logging.error(f"Twilio Verify check failed for {clean_phone}: {err_str}")
+        return {"approved": False, "message": f"Verification check failed: {err_str}"}
 
 def request_phone_verification(phone: str) -> dict:
     """

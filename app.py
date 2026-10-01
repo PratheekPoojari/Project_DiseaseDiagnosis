@@ -39,6 +39,7 @@ from src.notifications.notifier import (
     schedule_followup,
     trigger_immediate_test_notification,
     send_verification_otp,
+    check_verification_otp,
     is_phone_verified,
     purge_orphaned_followup_jobs,
     get_whatsapp_sandbox_info,
@@ -110,6 +111,8 @@ if "phone_verify_restricted" not in st.session_state:
     st.session_state["phone_verify_restricted"] = False
 if "phone_verify_message" not in st.session_state:
     st.session_state["phone_verify_message"] = ""
+if "phone_verify_otp_sent" not in st.session_state:
+    st.session_state["phone_verify_otp_sent"] = False  # True once Twilio Verify confirms dispatch
 
 # OTP rate limiting: max 5 send attempts per hour per session
 if "otp_send_attempts" not in st.session_state:
@@ -590,38 +593,37 @@ if st.session_state.get("phone_verify_pending") and st.session_state.get("user")
             with st.spinner("Dispatching SMS OTP..."):
                 res = send_verification_otp(_phone_for_display, channel="sms")
 
-            # Update rate-limit counters
+            # Update rate-limit counters (count the attempt regardless of success)
             if st.session_state["otp_first_attempt_time"] is None:
                 st.session_state["otp_first_attempt_time"] = time.time()
             st.session_state["otp_send_attempts"] = st.session_state.get("otp_send_attempts", 0) + 1
 
-            # Store result
+            # Store result metadata (code is None — Twilio Verify owns the OTP)
             st.session_state["phone_verify_channel"]    = "sms"
-            st.session_state["phone_verify_code"]       = res["code"]
+            st.session_state["phone_verify_code"]       = res.get("code")   # None with Verify API
             st.session_state["phone_verify_restricted"] = res.get("trial_restricted", False)
             st.session_state["phone_verify_message"]    = res.get("message", "")
+            st.session_state["phone_verify_otp_sent"]   = res.get("success", False)
 
-            # Confirmation toast — visible briefly before rerun
-            st.toast("📨 OTP dispatched successfully!", icon="✅")
-            time.sleep(1)   # Let the toast render before rerun
-            st.rerun()
+            # Conditional feedback: only celebrate if the SMS actually went through
+            if res.get("success"):
+                st.toast("📨 OTP sent successfully to your number!", icon="✅")
+                time.sleep(1)
+                st.rerun()
+            else:
+                st.error(f"❌ Failed to send OTP: {res.get('message', 'Unknown error.')}")
+                time.sleep(2)
+                st.rerun()
 
 
     # --- Step 2: Delivery Status ---
-    if _expected_code:
-        if _is_restricted:
-            # Twilio trial — SMS was blocked. Don't show the generated code.
-            st.info(
-                "📱 **Note:** Your registered number is not yet added to this app's Twilio Verified "
-                "Caller IDs, so the SMS could not be delivered automatically. "
-                "Please contact the administrator to verify your number in the Twilio Console, "
-                "or skip verification and proceed to the app.",
-                icon="ℹ️"
-            )
-        else:
-            st.success(f"✅ {_status_msg}")
+    _otp_sent = st.session_state.get("phone_verify_otp_sent", False)
+    if _otp_sent:
+        st.success(f"✅ {_status_msg}")
+    elif _status_msg and not _otp_sent and _attempts > 0:
+        st.error(f"❌ {_status_msg}")
 
-    # --- Step 3: OTP Input & Backend Verification ---
+    # --- Step 3: OTP Input & Backend Verification via Twilio ---
     st.markdown("**2. Enter 6-Digit Verification Code**")
     otp_in = st.text_input(
         "Verification Code:",
@@ -634,24 +636,31 @@ if st.session_state.get("phone_verify_pending") and st.session_state.get("user")
     action_c1, action_c2 = st.columns([1, 1])
     with action_c1:
         if st.button("✅ Verify OTP & Activate SMS", type="primary", use_container_width=True, key="verify_otp_submit_btn"):
-            if _expected_code and otp_in.strip() == str(_expected_code).strip():
-                st.success("🎉 Phone successfully verified! Automated SMS notifications are now active.")
-                st.session_state["phone_verify_pending"]       = False
-                st.session_state["phone_verify_code"]          = None
-                st.session_state["phone_verify_message"]       = ""
-                st.session_state["otp_send_attempts"]          = 0
-                st.session_state["otp_first_attempt_time"]     = None
-                st.rerun()
-            elif not otp_in.strip():
+            if not otp_in.strip():
                 st.error("Please enter the 6-digit code.")
+            elif not _otp_sent:
+                st.error("Please send the OTP first before attempting verification.")
             else:
-                st.error("❌ Incorrect verification code. Please check the code and try again.")
+                with st.spinner("Verifying code with Twilio..."):
+                    verify_res = check_verification_otp(_phone_for_display, otp_in.strip())
+                if verify_res["approved"]:
+                    st.success("🎉 Phone successfully verified! Automated SMS notifications are now active.")
+                    st.session_state["phone_verify_pending"]       = False
+                    st.session_state["phone_verify_code"]          = None
+                    st.session_state["phone_verify_message"]       = ""
+                    st.session_state["phone_verify_otp_sent"]      = False
+                    st.session_state["otp_send_attempts"]          = 0
+                    st.session_state["otp_first_attempt_time"]     = None
+                    st.rerun()
+                else:
+                    st.error(f"❌ {verify_res['message']}")
 
     with action_c2:
         if st.button("▶️ Continue to App (Skip Verification)", use_container_width=True, key="post_signup_continue"):
             st.session_state["phone_verify_pending"]   = False
             st.session_state["phone_verify_code"]      = None
             st.session_state["phone_verify_message"]   = ""
+            st.session_state["phone_verify_otp_sent"]  = False
             st.session_state["otp_send_attempts"]      = 0
             st.session_state["otp_first_attempt_time"] = None
             st.rerun()
