@@ -72,7 +72,7 @@ if "user" not in st.session_state:
     st.session_state["user"] = restored_user  # None if no valid session
 
 if "auth_mode" not in st.session_state:
-    st.session_state["auth_mode"] = "login"
+    st.session_state["auth_mode"] = "signup"
 
 # This key persists diagnosis results across Streamlit reruns so they don't
 # flash and vanish when the script re-executes (the core bug in the old version).
@@ -597,28 +597,17 @@ if st.session_state.get("phone_verify_pending") and st.session_state.get("user")
             time.sleep(1)   # Let the toast render before rerun
             st.rerun()
 
-    st.markdown("")
 
-    # --- Step 2: Display Delivery Status / OTP Code ---
+    # --- Step 2: Delivery Status ---
     if _expected_code:
         if _is_restricted:
-            # Twilio trial restriction — show generated code using st.markdown (st.info can't render HTML)
-            st.markdown(
-                f"""
-                <div style="background:#1e293b; border:1px solid #38bdf8; border-radius:8px; padding:14px 18px; margin-bottom:12px;">
-                    <p style="color:#94a3b8; margin:0 0 8px 0; font-size:13px;">
-                        📱 <strong>Twilio Free Trial Mode</strong><br>
-                        Twilio trial accounts can only dispatch live SMS to numbers manually registered in the
-                        <a href="https://console.twilio.com/us1/develop/phone-numbers/manage/verified" target="_blank" style="color:#38bdf8;">Twilio Console</a>.
-                        Your generated verification code is shown below — enter it to complete onboarding.
-                    </p>
-                    <div style="text-align:center; margin-top:10px;">
-                        <span style="font-size:11px; color:#64748b; text-transform:uppercase; letter-spacing:2px;">Your Demo OTP</span><br>
-                        <span style="font-size:36px; font-weight:900; color:#38bdf8; letter-spacing:10px; font-family:monospace;">{_expected_code}</span>
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True
+            # Twilio trial — SMS was blocked. Don't show the generated code.
+            st.info(
+                "📱 **Note:** Your registered number is not yet added to this app's Twilio Verified "
+                "Caller IDs, so the SMS could not be delivered automatically. "
+                "Please contact the administrator to verify your number in the Twilio Console, "
+                "or skip verification and proceed to the app.",
+                icon="ℹ️"
             )
         else:
             st.success(f"✅ {_status_msg}")
@@ -701,7 +690,8 @@ with st.sidebar:
     st.caption("Verify your Email & SMS delivery instantly:")
     if st.button("🚀 Test Notifications Now", use_container_width=True, key="sb_test_notif"):
         with st.spinner("Testing channels..."):
-            cond = "Fungal Infection"
+            # Pass the current diagnosis if one exists; otherwise None → neutral delivery test
+            cond = None
             if st.session_state.get("current_diagnosis") and st.session_state["current_diagnosis"].get("prediction"):
                 cond = st.session_state["current_diagnosis"]["prediction"]
             res_test = trigger_immediate_test_notification(
@@ -740,6 +730,7 @@ with st.sidebar:
         st.session_state["user"] = None
         st.session_state["current_diagnosis"] = None
         st.session_state["delete_account_pending"] = False
+        st.session_state["auth_mode"] = "signup"
         st.rerun()
 
     st.divider()
@@ -798,6 +789,7 @@ with st.sidebar:
                         st.session_state["last_symptom_text"] = ""
                         st.session_state["last_image_used"] = False
                         st.session_state["delete_account_pending"] = False
+                        st.session_state["auth_mode"] = "signup"
                         st.rerun()
                     else:
                         st.error("Deletion failed. Please try again.")
