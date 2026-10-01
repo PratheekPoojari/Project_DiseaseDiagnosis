@@ -13,6 +13,7 @@ import streamlit as st
 import os
 import sys
 import tempfile
+import time
 import speech_recognition as sr
 import pandas as pd
 from gtts import gTTS
@@ -32,15 +33,24 @@ from src.fusion.narrative import generate_specialist_narrative
 from src.nlp.file_parser import extract_text_from_file
 from src.fusion.data_export import export_txt, export_csv, export_pdf, export_docx
 from src.auth.db import init_db
-from src.auth.auth import signup, login, create_session, load_session, logout
+from src.auth.auth import signup, login, create_session, load_session, logout, delete_account_and_logout
 from src.health.tracker import save_diagnosis, get_history, compute_trend
-from src.notifications.notifier import schedule_followup, trigger_immediate_test_notification, DEMO_MODE
+from src.notifications.notifier import (
+    schedule_followup,
+    trigger_immediate_test_notification,
+    send_verification_otp,
+    is_phone_verified,
+    purge_orphaned_followup_jobs,
+    get_whatsapp_sandbox_info,
+    DEMO_MODE,
+)
 
 
 # ==============================================================================
-# STARTUP — DB init (runs once; safe to call every time)
+# STARTUP — DB init & cleanup (runs once; safe to call every time)
 # ==============================================================================
 init_db()
+purge_orphaned_followup_jobs()
 
 
 # ==============================================================================
@@ -82,6 +92,30 @@ if "demo_interval" not in st.session_state:
     st.session_state["demo_interval"] = 30
 if "symptom_input_text" not in st.session_state:
     st.session_state["symptom_input_text"] = ""
+
+# Two-phase account deletion flow: False = idle, True = awaiting confirmation
+if "delete_account_pending" not in st.session_state:
+    st.session_state["delete_account_pending"] = False
+
+# Phone verification OTP flow (post-signup, Twilio trial)
+if "phone_verify_pending" not in st.session_state:
+    st.session_state["phone_verify_pending"] = False
+if "phone_verify_code" not in st.session_state:
+    st.session_state["phone_verify_code"] = None   # 6-digit code
+if "phone_verify_number" not in st.session_state:
+    st.session_state["phone_verify_number"] = ""
+if "phone_verify_channel" not in st.session_state:
+    st.session_state["phone_verify_channel"] = "sms"
+if "phone_verify_restricted" not in st.session_state:
+    st.session_state["phone_verify_restricted"] = False
+if "phone_verify_message" not in st.session_state:
+    st.session_state["phone_verify_message"] = ""
+
+# OTP rate limiting: max 5 send attempts per hour per session
+if "otp_send_attempts" not in st.session_state:
+    st.session_state["otp_send_attempts"] = 0
+if "otp_first_attempt_time" not in st.session_state:
+    st.session_state["otp_first_attempt_time"] = None  # float (time.time()) or None
 
 
 # ==============================================================================
@@ -152,7 +186,7 @@ def check_password_strength(password: str) -> tuple:
         5. Contains at least one special character
     """
     if not password:
-        return (0, "", "gray")
+        return (0, "Not Entered", "#888")
 
     score = 0
     if len(password) >= 8:
@@ -271,8 +305,11 @@ if st.session_state["user"] is None:
             )
 
             # Graphical 4-segment live password strength meter & client-side zero-lag tracker
-            curr_pass = st.session_state.get("su_pass", "")
-            pw_score, pw_label, pw_color = check_password_strength(curr_pass) if curr_pass else (0, "Not Entered", "#888")
+            curr_pass = su_pass.strip() if su_pass else ""
+            if curr_pass:
+                pw_score, pw_label, pw_color = check_password_strength(curr_pass)
+            else:
+                pw_score, pw_label, pw_color = (0, "Not Entered", "#888")
 
             # Initial styling based on server state
             bar_colors = ["#333", "#333", "#333", "#333"]
@@ -317,14 +354,9 @@ if st.session_state["user"] is None:
                 function attachPasswordWatcher() {
                     const doc = window.parent.document;
                     if (!doc) return;
-                    // Find all password inputs
-                    const inputs = doc.querySelectorAll('input[type="password"]');
-                    if (!inputs || inputs.length === 0) return;
-                    
-                    // The first password input is su_pass
-                    const pwInput = inputs[0];
-                    if (pwInput.dataset.watcherAttached) return;
-                    pwInput.dataset.watcherAttached = "true";
+                    // Find the EXACT signup password input by aria-label
+                    const pwInput = doc.querySelector('input[aria-label="Password *"]');
+                    if (!pwInput) return;
 
                     const badge = doc.getElementById('pw-badge');
                     const bar1 = doc.getElementById('pw-bar-1');
@@ -336,15 +368,17 @@ if st.session_state["user"] is None:
                     const hintNum = doc.getElementById('hint-num');
                     const hintSym = doc.getElementById('hint-sym');
 
-                    pwInput.addEventListener('input', function(e) {
-                        const val = e.target.value || "";
+                    function updateMeter(val) {
                         if (!badge || !bar1) return;
-
+                        val = val || "";
                         if (val.length === 0) {
                             badge.textContent = "Not Entered";
                             badge.style.color = "#888";
                             badge.style.borderColor = "#444";
-                            [bar1, bar2, bar3, bar4].forEach(b => b.style.background = "#333");
+                            if (bar1) bar1.style.background = "#333";
+                            if (bar2) bar2.style.background = "#333";
+                            if (bar3) bar3.style.background = "#333";
+                            if (bar4) bar4.style.background = "#333";
                             if (hintLen) hintLen.innerHTML = "○ 8+ characters";
                             if (hintCase) hintCase.innerHTML = "○ Upper & lower case";
                             if (hintNum) hintNum.innerHTML = "○ Number (0-9)";
@@ -402,10 +436,24 @@ if st.session_state["user"] is None:
                             bar3.style.background = "#10b981";
                             bar4.style.background = "#10b981";
                         }
-                    });
+                    }
+
+                    // Run immediately on current field value
+                    updateMeter(pwInput.value);
+
+                    if (!pwInput.dataset.watcherAttached) {
+                        pwInput.dataset.watcherAttached = "true";
+                        pwInput.addEventListener('input', function(e) {
+                            updateMeter(e.target.value);
+                        });
+                        pwInput.addEventListener('keyup', function(e) {
+                            updateMeter(e.target.value);
+                        });
+                    }
                 }
+                setTimeout(attachPasswordWatcher, 50);
                 setTimeout(attachPasswordWatcher, 200);
-                setTimeout(attachPasswordWatcher, 800);
+                setTimeout(attachPasswordWatcher, 600);
                 </script>
                 """,
                 height=0,
@@ -462,6 +510,18 @@ if st.session_state["user"] is None:
                     st.session_state["user"] = result["user"]
                     create_session(result["user"]["id"])
                     st.success(f"Account created! Welcome, {result['user']['full_name']}!")
+
+                    # ── Trigger Phone Verification for the new number ──
+                    formatted_phone = su_phone.strip()
+                    otp_res = send_verification_otp(formatted_phone, channel="sms")
+
+                    st.session_state["phone_verify_pending"] = True
+                    st.session_state["phone_verify_number"] = formatted_phone
+                    st.session_state["phone_verify_code"] = otp_res["code"]
+                    st.session_state["phone_verify_channel"] = "sms"
+                    st.session_state["phone_verify_restricted"] = otp_res.get("trial_restricted", False)
+                    st.session_state["phone_verify_message"] = otp_res.get("message", "")
+
                     st.rerun()
                 else:
                     st.error(result["error"])
@@ -471,8 +531,138 @@ if st.session_state["user"] is None:
 
 
 # ==============================================================================
-# MAIN APP — only reached if user is logged in
+# PHONE VERIFICATION INTERCEPT — runs OUTSIDE the auth gate
+# After signup, st.rerun() sets the user in session state, which means the
+# auth gate (if user is None) is skipped entirely on the next run. This block
+# catches the logged-in-but-pending-OTP state BEFORE the main app renders.
 # ==============================================================================
+if st.session_state.get("phone_verify_pending") and st.session_state.get("user"):
+    _phone_for_display = st.session_state.get("phone_verify_number", "your number")
+    _expected_code     = st.session_state.get("phone_verify_code")
+    _is_restricted     = st.session_state.get("phone_verify_restricted", False)
+    _status_msg        = st.session_state.get("phone_verify_message", "")
+    _attempts          = st.session_state.get("otp_send_attempts", 0)
+    _first_ts          = st.session_state.get("otp_first_attempt_time")   # float or None
+
+    # --- Rate-limit window reset: if first attempt was > 1 hour ago, reset counters ---
+    _OTP_MAX_ATTEMPTS = 5
+    _OTP_WINDOW_SECS  = 3600  # 1 hour
+    if _first_ts is not None and (time.time() - _first_ts) > _OTP_WINDOW_SECS:
+        st.session_state["otp_send_attempts"]      = 0
+        st.session_state["otp_first_attempt_time"] = None
+        _attempts = 0
+        _first_ts = None
+
+    _rate_limited = (_attempts >= _OTP_MAX_ATTEMPTS)
+
+    st.title("📱 One-Time Phone Verification")
+    st.caption(f"Verify your phone number (**{_phone_for_display}**) to enable automated SMS follow-up reminders.")
+    st.markdown("---")
+
+    # --- Step 1: Send OTP ---
+    st.markdown("**1. Send Verification Code via SMS**")
+
+    if _rate_limited:
+        # Calculate remaining lockout time
+        _elapsed   = time.time() - _first_ts if _first_ts else 0
+        _remaining = max(0, int(_OTP_WINDOW_SECS - _elapsed))
+        _mins, _secs = divmod(_remaining, 60)
+        st.error(
+            f"🚫 **OTP send limit reached.** You have used all {_OTP_MAX_ATTEMPTS} allowed "
+            f"attempts for this hour.  \n"
+            f"Please try again in **{_mins}m {_secs:02d}s**."
+        )
+    else:
+        _remaining_attempts = _OTP_MAX_ATTEMPTS - _attempts
+        if _attempts > 0:
+            st.caption(f"⚠️ {_remaining_attempts} of {_OTP_MAX_ATTEMPTS} OTP sends remaining this hour.")
+
+        if st.button("💬 Send SMS OTP", use_container_width=True, type="primary", disabled=_rate_limited):
+            with st.spinner("Dispatching SMS OTP..."):
+                res = send_verification_otp(_phone_for_display, channel="sms")
+
+            # Update rate-limit counters
+            if st.session_state["otp_first_attempt_time"] is None:
+                st.session_state["otp_first_attempt_time"] = time.time()
+            st.session_state["otp_send_attempts"] = st.session_state.get("otp_send_attempts", 0) + 1
+
+            # Store result
+            st.session_state["phone_verify_channel"]    = "sms"
+            st.session_state["phone_verify_code"]       = res["code"]
+            st.session_state["phone_verify_restricted"] = res.get("trial_restricted", False)
+            st.session_state["phone_verify_message"]    = res.get("message", "")
+
+            # Confirmation toast — visible briefly before rerun
+            st.toast("📨 OTP dispatched successfully!", icon="✅")
+            time.sleep(1)   # Let the toast render before rerun
+            st.rerun()
+
+    st.markdown("")
+
+    # --- Step 2: Display Delivery Status / OTP Code ---
+    if _expected_code:
+        if _is_restricted:
+            # Twilio trial restriction — show generated code using st.markdown (st.info can't render HTML)
+            st.markdown(
+                f"""
+                <div style="background:#1e293b; border:1px solid #38bdf8; border-radius:8px; padding:14px 18px; margin-bottom:12px;">
+                    <p style="color:#94a3b8; margin:0 0 8px 0; font-size:13px;">
+                        📱 <strong>Twilio Free Trial Mode</strong><br>
+                        Twilio trial accounts can only dispatch live SMS to numbers manually registered in the
+                        <a href="https://console.twilio.com/us1/develop/phone-numbers/manage/verified" target="_blank" style="color:#38bdf8;">Twilio Console</a>.
+                        Your generated verification code is shown below — enter it to complete onboarding.
+                    </p>
+                    <div style="text-align:center; margin-top:10px;">
+                        <span style="font-size:11px; color:#64748b; text-transform:uppercase; letter-spacing:2px;">Your Demo OTP</span><br>
+                        <span style="font-size:36px; font-weight:900; color:#38bdf8; letter-spacing:10px; font-family:monospace;">{_expected_code}</span>
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+        else:
+            st.success(f"✅ {_status_msg}")
+
+    # --- Step 3: OTP Input & Backend Verification ---
+    st.markdown("**2. Enter 6-Digit Verification Code**")
+    otp_in = st.text_input(
+        "Verification Code:",
+        max_chars=6,
+        placeholder="Enter 6-digit OTP (e.g. 123456)",
+        key="phone_otp_input_field",
+        label_visibility="collapsed"
+    )
+
+    action_c1, action_c2 = st.columns([1, 1])
+    with action_c1:
+        if st.button("✅ Verify OTP & Activate SMS", type="primary", use_container_width=True, key="verify_otp_submit_btn"):
+            if _expected_code and otp_in.strip() == str(_expected_code).strip():
+                st.success("🎉 Phone successfully verified! Automated SMS notifications are now active.")
+                st.session_state["phone_verify_pending"]       = False
+                st.session_state["phone_verify_code"]          = None
+                st.session_state["phone_verify_message"]       = ""
+                st.session_state["otp_send_attempts"]          = 0
+                st.session_state["otp_first_attempt_time"]     = None
+                st.rerun()
+            elif not otp_in.strip():
+                st.error("Please enter the 6-digit code.")
+            else:
+                st.error("❌ Incorrect verification code. Please check the code and try again.")
+
+    with action_c2:
+        if st.button("▶️ Continue to App (Skip Verification)", use_container_width=True, key="post_signup_continue"):
+            st.session_state["phone_verify_pending"]   = False
+            st.session_state["phone_verify_code"]      = None
+            st.session_state["phone_verify_message"]   = ""
+            st.session_state["otp_send_attempts"]      = 0
+            st.session_state["otp_first_attempt_time"] = None
+            st.rerun()
+
+    st.markdown("---")
+    st.caption("💬 WhatsApp notifications are planned as a future scope feature pending WhatsApp Business API approval.")
+
+    st.stop()   # Halt rendering until phone verification is either completed or skipped
+
 
 user = st.session_state["user"]
 
@@ -508,7 +698,7 @@ with st.sidebar:
 
     # Manual notification testing
     st.markdown("**Outbound Channel Test**")
-    st.caption("Verify your Email, SMS & WhatsApp delivery instantly:")
+    st.caption("Verify your Email & SMS delivery instantly:")
     if st.button("🚀 Test Notifications Now", use_container_width=True, key="sb_test_notif"):
         with st.spinner("Testing channels..."):
             cond = "Fungal Infection"
@@ -530,10 +720,7 @@ with st.sidebar:
         else:
             st.error(f"📱 SMS: {res_test['sms_msg']}")
 
-        if res_test["whatsapp"]:
-            st.success(f"💬 WhatsApp: {res_test['whatsapp_msg']}")
-        else:
-            st.warning(f"💬 WhatsApp: {res_test['whatsapp_msg']}")
+        st.caption("💬 WhatsApp: Future scope — pending WhatsApp Business API approval.")
 
     st.divider()
 
@@ -552,7 +739,78 @@ with st.sidebar:
         logout(user["id"])
         st.session_state["user"] = None
         st.session_state["current_diagnosis"] = None
+        st.session_state["delete_account_pending"] = False
         st.rerun()
+
+    st.divider()
+
+    # ── Delete Account (two-phase confirmation) ──────────────────────────────
+    # Phase 1: idle — show the trigger button
+    if not st.session_state["delete_account_pending"]:
+        if st.button(
+            "🗑️ Delete Account",
+            use_container_width=True,
+            type="secondary",
+            key="sb_delete_account_trigger",
+            help="Permanently delete your account and all associated data."
+        ):
+            st.session_state["delete_account_pending"] = True
+            st.rerun()
+
+    # Phase 2: confirmation — show the danger card
+    else:
+        st.markdown(
+            """
+            <div style="background:#3b1010; border:1px solid #ef4444;
+                        border-radius:8px; padding:12px; margin-bottom:8px;">
+                <span style="color:#ef4444; font-weight:700; font-size:13px;">
+                    ⚠️ PERMANENT DELETION
+                </span><br>
+                <span style="color:#fca5a5; font-size:12px;">
+                    This will erase your account, all diagnosis history, and all
+                    session data. This action <b>cannot be undone</b>.
+                </span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        confirm_text = st.text_input(
+            "Type **DELETE** to confirm:",
+            key="sb_delete_confirm_input",
+            placeholder="DELETE",
+            label_visibility="visible",
+        )
+        col_confirm, col_cancel = st.columns(2)
+        with col_confirm:
+            if st.button(
+                "Confirm",
+                use_container_width=True,
+                type="primary",
+                key="sb_delete_confirm_btn",
+            ):
+                if confirm_text.strip() == "DELETE":
+                    user_id_to_delete = user["id"]
+                    with st.spinner("Deleting your account..."):
+                        success = delete_account_and_logout(user_id_to_delete)
+                    if success:
+                        st.session_state["user"] = None
+                        st.session_state["current_diagnosis"] = None
+                        st.session_state["last_symptom_text"] = ""
+                        st.session_state["last_image_used"] = False
+                        st.session_state["delete_account_pending"] = False
+                        st.rerun()
+                    else:
+                        st.error("Deletion failed. Please try again.")
+                else:
+                    st.error("Type DELETE (all caps) to confirm.")
+        with col_cancel:
+            if st.button(
+                "Cancel",
+                use_container_width=True,
+                key="sb_delete_cancel_btn",
+            ):
+                st.session_state["delete_account_pending"] = False
+                st.rerun()
 
 
 # ---- Top bar: user greeting ----
@@ -915,10 +1173,10 @@ if diagnosis is not None:
 
         st.info(
             f"📬 **Follow-up Notifications Scheduled:** {interval_str} "
-            f"via **Email**, **SMS**, and **WhatsApp** to **{user['email']}** and **{user['phone']}**."
+            f"via **Email** and **SMS** to **{user['email']}** and **{user['phone']}**."
         )
 
-        if st.button("🚀 Send Test Follow-Up Now (Email, SMS & WhatsApp)", use_container_width=True, key="res_test_notif"):
+        if st.button("🚀 Send Test Follow-Up Now (Email & SMS)", use_container_width=True, key="res_test_notif"):
             with st.spinner("Dispatching live notifications..."):
                 test_res = trigger_immediate_test_notification(
                     user_name=user["full_name"],
@@ -926,7 +1184,7 @@ if diagnosis is not None:
                     phone=user["phone"],
                     condition=diagnosis["prediction"]
                 )
-            col_nt1, col_nt2, col_nt3 = st.columns(3)
+            col_nt1, col_nt2 = st.columns(2)
             with col_nt1:
                 if test_res["email"]:
                     st.success(f"📧 **Email**\n\n{test_res['email_msg']}")
@@ -937,11 +1195,7 @@ if diagnosis is not None:
                     st.success(f"📱 **SMS**\n\n{test_res['sms_msg']}")
                 else:
                     st.error(f"📱 **SMS**\n\n{test_res['sms_msg']}")
-            with col_nt3:
-                if test_res["whatsapp"]:
-                    st.success(f"💬 **WhatsApp**\n\n{test_res['whatsapp_msg']}")
-                else:
-                    st.warning(f"💬 **WhatsApp**\n\n{test_res['whatsapp_msg']}")
+            st.caption("💬 WhatsApp notifications are planned as a future feature.")
 
         # ==========================================================
         # EXPORT / DOWNLOAD

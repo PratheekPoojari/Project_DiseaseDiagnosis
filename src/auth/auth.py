@@ -13,7 +13,7 @@ import json
 import os
 from datetime import datetime, timedelta
 
-from src.auth.db import get_connection
+from src.auth.db import get_connection, delete_account as _db_delete_account
 
 # The session token is persisted in this file so the user stays logged in
 # even after the browser/app is closed (Option A — one machine, one user).
@@ -254,3 +254,30 @@ def _clear_session_file() -> None:
             os.remove(SESSION_FILE)
     except Exception:
         pass
+
+
+# ==============================================================================
+# ACCOUNT DELETION
+# ==============================================================================
+
+def delete_account_and_logout(user_id: int) -> bool:
+    """
+    Permanently deletes the user's account and all associated data, halts all
+    active APScheduler reminder jobs for this user, and clears the local session
+    file — leaving the app in a fully logged-out state with zero residual jobs.
+
+    Returns:
+        True if the DB deletion succeeded, False otherwise.
+    """
+    try:
+        from src.notifications.notifier import cancel_user_followups, purge_orphaned_followup_jobs
+        cancel_user_followups(user_id)
+        purge_orphaned_followup_jobs()
+    except Exception as e:
+        import logging
+        logging.warning(f"Error cancelling followups during delete for user {user_id}: {e}")
+
+    success = _db_delete_account(user_id)
+    _clear_session_file()
+    return success
+

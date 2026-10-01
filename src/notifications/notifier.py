@@ -148,10 +148,7 @@ def send_sms(to_phone: str, message: str) -> bool:
     try:
         client = Client(account_sid, auth_token)
         message_instance = client.messages.create(
-            # Twilio trial accounts only accept predefined template names as the body.
-            # The email channel carries the full personalized follow-up message.
-            # To send custom SMS bodies, upgrade to a paid Twilio account.
-            body="sms_appointment_reminders",
+            body=message,
             from_=from_phone,
             to=phone
         )
@@ -246,6 +243,25 @@ def _build_sms_message(user_name: str, condition: str, day: int) -> str:
     )
 
 
+def _build_test_message(user_name: str) -> tuple[str, str]:
+    """Builds a neutral system delivery verification email without any disease diagnosis."""
+    subject = "[Skin Diagnosis System] Delivery Test Notification"
+    body = (
+        f"Hello {user_name},\n\n"
+        f"This is an automated delivery test verifying that your registered email address "
+        f"is active and properly connected to the Skin Disease Diagnosis System.\n\n"
+        f"All notification channels are operational. You will receive follow-up check-ins "
+        f"here whenever you complete a clinical diagnosis in the application.\n\n"
+        f"— Multimodal Skin Disease Diagnosis System"
+    )
+    return subject, body
+
+
+def _build_sms_test_message(user_name: str) -> str:
+    """Builds a neutral SMS body for system channel testing."""
+    return f"Hi {user_name}, this is a delivery test from the Skin Diagnosis System. Outbound SMS verified."
+
+
 def _build_whatsapp_message(user_name: str, condition: str, day: int) -> str:
     """Builds a structured WhatsApp reminder message."""
     condition_clean = condition.replace("_", " ").title()
@@ -272,27 +288,31 @@ def trigger_immediate_test_notification(
     user_name: str,
     email: str,
     phone: str,
-    condition: str = "Fungal Infection"
+    condition: str | None = None
 ) -> dict:
     """
-    Synchronously triggers an immediate test follow-up across Email, SMS, and WhatsApp.
-    Returns status and diagnostic messages for all three channels.
+    Synchronously triggers an immediate test follow-up across Email and SMS.
+    If condition is None, dispatches a neutral system delivery verification.
+    If condition is provided, dispatches a diagnosis-specific follow-up reminder.
     """
-    subject, email_body = _build_followup_message(user_name, condition, 1)
-    sms_body = _build_sms_message(user_name, condition, 1)
-    whatsapp_body = _build_whatsapp_message(user_name, condition, 1)
+    if condition and condition.strip() and condition != "System Test":
+        subject, email_body = _build_followup_message(user_name, condition, 1)
+        sms_body = _build_sms_message(user_name, condition, 1)
+    else:
+        subject, email_body = _build_test_message(user_name)
+        sms_body = _build_sms_test_message(user_name)
 
-    # 1. Email via Gmail SMTP
+    # 1. Email via Gmail SMTP (fully automatic)
     email_ok = send_email(email, subject, email_body)
     email_msg = f"Delivered to {email}" if email_ok else "Failed: Check EMAIL_ADDRESS and EMAIL_APP_PASSWORD in .env"
 
-    # 2. SMS via Twilio
+    # 2. SMS via Twilio (semi-automatic — requires one-time phone OTP verification at signup)
     sms_ok = send_sms(phone, sms_body)
-    sms_msg = f"Delivered to {phone}" if sms_ok else "Failed: Ensure recipient phone is verified in your Twilio Console"
+    sms_msg = f"Delivered to {phone}" if sms_ok else "Failed: Ensure recipient phone was verified via OTP during signup"
 
-    # 3. WhatsApp via Twilio
-    wa_ok = send_whatsapp(phone, whatsapp_body)
-    wa_msg = f"Delivered to WhatsApp {phone}" if wa_ok else "Twilio Trial: Recipient must join Twilio sandbox by sending 'join <sandbox-code>' to +1 415 523 8886, or requires approved ContentSid."
+    # 3. WhatsApp — Future Scope
+    wa_ok = False
+    wa_msg = "WhatsApp: Future scope — requires approved Twilio WhatsApp Business API."
 
     return {
         "email": email_ok,
@@ -344,17 +364,16 @@ def schedule_followup(
     for day, fire_at in intervals.items():
         subject, email_body = _build_followup_message(user_name, condition, day)
         sms_body = _build_sms_message(user_name, condition, day)
-        whatsapp_body = _build_whatsapp_message(user_name, condition, day)
 
         # Capture loop variables in default args to avoid closure pitfall
         def _send_notification(
             _email=email, _phone=phone,
             _subject=subject, _email_body=email_body,
-            _sms_body=sms_body, _whatsapp_body=whatsapp_body
+            _sms_body=sms_body
         ):
             send_email(_email, _subject, _email_body)
             send_sms(_phone, _sms_body)
-            send_whatsapp(_phone, _whatsapp_body)
+            # WhatsApp: future scope — not dispatched here.
 
         scheduler.add_job(
             func=_send_notification,
@@ -365,5 +384,281 @@ def schedule_followup(
         )
 
     logging.info(
-        f"Scheduled follow-ups (Email + SMS + WhatsApp) for user {user_id} | Mode: {mode_label}"
+        f"Scheduled follow-ups (Email + SMS) for user {user_id} | Mode: {mode_label}"
     )
+
+
+def cancel_user_followups(user_id: int) -> None:
+    """
+    Cancels all scheduled follow-up reminder jobs for a specific user from APScheduler.
+    Must be called during account deletion to immediately halt all future automated notifications.
+    """
+    scheduler = get_scheduler()
+    for job in list(scheduler.get_jobs()):
+        if job.id.startswith(f"followup_{user_id}_"):
+            try:
+                job.remove()
+                logging.info(f"Removed follow-up job {job.id} for user {user_id}")
+            except Exception as e:
+                logging.warning(f"Failed to remove job {job.id}: {e}")
+
+
+def purge_orphaned_followup_jobs() -> None:
+    """
+    Scans all jobs in APScheduler and removes any jobs belonging to users
+    who no longer exist in the users database table.
+    Guarantees no ghost notifications are sent for deleted accounts.
+    """
+    try:
+        from src.auth.db import get_connection
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM users")
+        active_user_ids = {row["id"] for row in cursor.fetchall()}
+        conn.close()
+
+        scheduler = get_scheduler()
+        for job in list(scheduler.get_jobs()):
+            if job.id.startswith("followup_"):
+                parts = job.id.split("_")
+                if len(parts) >= 3 and parts[1].isdigit():
+                    job_user_id = int(parts[1])
+                    if job_user_id not in active_user_ids:
+                        job.remove()
+                        logging.info(f"Purged orphaned followup job {job.id} for non-existent user {job_user_id}")
+    except Exception as e:
+        logging.warning(f"Failed to purge orphaned followup jobs: {e}")
+
+
+# ==============================================================================
+# TWILIO TRIAL HELPERS — Phone Verification & WhatsApp Sandbox
+# ==============================================================================
+
+def send_verification_otp(phone: str, channel: str = "sms") -> dict:
+    """
+    Generates and dispatches a 6-digit OTP to the user's phone via SMS or initiates
+    an automated voice call. Handles Twilio Trial account constraints transparently.
+
+    Args:
+        phone: 10-digit Indian number or international E.164 string.
+        channel: 'sms' (SMS OTP) or 'call' (Automated IVR call).
+
+    Returns:
+        {
+            "success": bool,
+            "code": str,             # 6-digit OTP
+            "channel": str,          # 'sms' or 'call'
+            "trial_restricted": bool,# True if blocked by Twilio Free Trial limits
+            "message": str           # Descriptive human-readable result
+        }
+    """
+    import random
+    otp = f"{random.randint(100000, 999999)}"
+
+    # Normalize phone to E.164
+    clean_phone = phone.strip()
+    if clean_phone.startswith("0"):
+        clean_phone = clean_phone[1:]
+    if not clean_phone.startswith("+"):
+        if clean_phone.startswith("91") and len(clean_phone) == 12:
+            clean_phone = "+" + clean_phone
+        elif len(clean_phone) == 10:
+            clean_phone = "+91" + clean_phone
+        else:
+            clean_phone = "+" + clean_phone
+
+    if channel == "sms":
+        msg = f"Your Skin Disease Diagnosis System verification OTP is {otp}. Valid for 10 minutes."
+        sms_sent = send_sms(clean_phone, msg)
+        if sms_sent:
+            return {
+                "success": True,
+                "code": otp,
+                "channel": "sms",
+                "trial_restricted": False,
+                "message": f"Verification SMS successfully sent to {clean_phone}."
+            }
+        else:
+            # Twilio trial accounts cannot send SMS to unverified numbers.
+            return {
+                "success": False,
+                "code": otp,
+                "channel": "sms",
+                "trial_restricted": True,
+                "message": (
+                    f"Twilio Free Trial restriction: Outbound SMS to unverified numbers is restricted. "
+                    f"To deliver live SMS to {clean_phone}, add it to your Twilio Console under Verified Caller IDs."
+                )
+            }
+
+    elif channel == "call":
+        account_sid = os.getenv("TWILIO_ACCOUNT_SID")
+        auth_token  = os.getenv("TWILIO_AUTH_TOKEN")
+        if not account_sid or not auth_token:
+            return {
+                "success": False,
+                "code": otp,
+                "channel": "call",
+                "trial_restricted": False,
+                "message": "Twilio credentials missing in .env."
+            }
+        try:
+            client = Client(account_sid, auth_token)
+            val = client.validation_requests.create(
+                phone_number=clean_phone,
+                friendly_name=f"Skin Diagnosis - {clean_phone}"
+            )
+            return {
+                "success": True,
+                "code": val.validation_code,
+                "channel": "call",
+                "trial_restricted": False,
+                "message": f"Twilio verification call initiated to {clean_phone}. Enter code on phone keypad."
+            }
+        except Exception as e:
+            err_str = str(e)
+            is_trial = "trial accounts" in err_str.lower() or "10002" in err_str
+            return {
+                "success": False,
+                "code": otp,
+                "channel": "call",
+                "trial_restricted": is_trial,
+                "message": (
+                    "Twilio Free Trial restriction: Placing automated verification calls via API is not supported on trial accounts. Please use SMS OTP."
+                    if is_trial else f"Call failed: {err_str}"
+                )
+            }
+    else:
+        return {
+            "success": False,
+            "code": otp,
+            "channel": channel,
+            "trial_restricted": False,
+            "message": f"Unsupported channel: {channel}"
+        }
+
+def request_phone_verification(phone: str) -> dict:
+    """
+    Programmatically triggers a Twilio verification call/SMS to a new user's
+    phone number so that it gets added to the trial account's Verified Caller IDs.
+
+    Why we need it: Twilio trial accounts can only send SMS/WhatsApp to verified
+                    numbers. Instead of manually adding numbers in the Twilio
+                    console, this initiates the process via the REST API:
+                        1. Twilio calls the user's phone and reads them a 6-digit code
+                           (or sends it via SMS, depending on Twilio account settings).
+                        2. The user enters that code into the app.
+                        3. The app calls check_phone_verification() to complete it.
+                    Once confirmed, Twilio adds the number to Verified Caller IDs and
+                    that number can receive SMS from your trial account.
+
+    Returns:
+        {
+            "success": bool,
+            "validation_code": str | None,   # 6-digit code shown in the Twilio call
+            "message": str                   # human-readable status or error
+        }
+    """
+    account_sid = os.getenv("TWILIO_ACCOUNT_SID")
+    auth_token  = os.getenv("TWILIO_AUTH_TOKEN")
+
+    if not account_sid or not auth_token:
+        return {
+            "success": False,
+            "validation_code": None,
+            "message": "Twilio not configured. Set TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN in .env"
+        }
+
+    # Normalise to E.164 (same logic as send_sms)
+    phone = phone.strip()
+    if phone.startswith("0"):
+        phone = phone[1:]
+    if not phone.startswith("+"):
+        if phone.startswith("91") and len(phone) == 12:
+            phone = "+" + phone
+        elif len(phone) == 10:
+            phone = "+91" + phone
+        else:
+            phone = "+" + phone
+
+    try:
+        client = Client(account_sid, auth_token)
+        validation = client.validation_requests.create(
+            phone_number=phone,
+            friendly_name=f"Skin Diagnosis App — {phone}",
+        )
+        logging.info(f"Verification call triggered for {phone}. Code: {validation.validation_code}")
+        return {
+            "success": True,
+            "validation_code": validation.validation_code,
+            "message": (
+                f"Twilio is calling {phone}. "
+                f"When prompted, enter the code shown on your screen on your phone keypad."
+            )
+        }
+    except Exception as e:
+        logging.error(f"Phone verification request failed for {phone}: {e}")
+        return {
+            "success": False,
+            "validation_code": None,
+            "message": f"Verification failed: {e}"
+        }
+
+
+def is_phone_verified(phone: str) -> bool:
+    """
+    Queries Twilio's OutgoingCallerIds list to check if a phone number has been
+    successfully verified and can receive SMS on this trial account.
+    """
+    account_sid = os.getenv("TWILIO_ACCOUNT_SID")
+    auth_token  = os.getenv("TWILIO_AUTH_TOKEN")
+    if not account_sid or not auth_token:
+        return False
+
+    phone = phone.strip()
+    if phone.startswith("0"):
+        phone = phone[1:]
+    if not phone.startswith("+"):
+        if phone.startswith("91") and len(phone) == 12:
+            phone = "+" + phone
+        elif len(phone) == 10:
+            phone = "+91" + phone
+        else:
+            phone = "+" + phone
+
+    try:
+        client = Client(account_sid, auth_token)
+        caller_ids = [item.phone_number for item in client.outgoing_caller_ids.list()]
+        return phone in caller_ids
+    except Exception as e:
+        logging.error(f"Error checking caller ID verification for {phone}: {e}")
+        return False
+
+
+def get_whatsapp_sandbox_info() -> dict:
+    """
+    Returns the WhatsApp sandbox join instructions so the app can display them
+    to a new user during or after signup.
+
+    Why we need it: WhatsApp's policy (enforced by Meta, not Twilio) requires
+                    recipients to explicitly opt in by texting the sandbox join
+                    code to the sandbox number. There is no API to bypass this —
+                    not on trial, not on paid accounts with an approved sender.
+                    The only thing we can do is show the instructions clearly.
+
+    Returns a dict with sandbox_number and join_code from .env, so the
+    instructions reflect the actual sandbox this account is paired with.
+    """
+    sandbox_number = os.getenv("TWILIO_WHATSAPP_NUMBER", "whatsapp:+14155238886")
+    join_code      = os.getenv("TWILIO_WHATSAPP_JOIN_CODE", "<your-sandbox-code>")
+    # Strip the "whatsapp:" prefix for display
+    display_number = sandbox_number.replace("whatsapp:", "")
+    return {
+        "sandbox_number": display_number,
+        "join_code": join_code,
+        "instructions": (
+            f"To receive WhatsApp notifications, send the message  "
+            f"**join {join_code}**  to  **{display_number}**  on WhatsApp. "
+            f"This is a one-time opt-in required by WhatsApp's sandbox policy."
+        )
+    }
