@@ -220,7 +220,16 @@ if st.session_state["user"] is None:
     if st.session_state["demo_mode"]:
         st.info("🧪 **Demo Mode Active** — notifications fire every 30 seconds per day.")
 
-    tab_login, tab_signup = st.tabs(["🔑 Log In", "📝 Sign Up"])
+    # Render Login first when user explicitly chose it; otherwise render Sign Up first.
+    # Streamlit always activates the leftmost tab — swapping order is the only way to
+    # control the default without JavaScript. auth_mode is set to "signup" on app launch,
+    # logout, and account deletion, so new/returning users land directly on Sign Up.
+    _want_login = (st.session_state.get("auth_mode") == "login")
+
+    if _want_login:
+        tab_login, tab_signup = st.tabs(["🔑 Log In", "📝 Sign Up"])
+    else:
+        tab_signup, tab_login = st.tabs(["📝 Sign Up", "🔑 Log In"])
 
     # ---- LOGIN TAB ----
     with tab_login:
