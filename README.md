@@ -11,7 +11,7 @@
 
 **A clinical-grade, multimodal dermatological screening platform combining Deep Convolutional Vision (ConvNeXt-Base) and Clinical Transformers (Bio_ClinicalBERT) via Late Decision Fusion, deployed behind a secure Streamlit consultation hub.**
 
-[Features](#-key-features) • [Architecture](#-system-architecture) • [Empirical Performance](#-empirical-evaluation--clinical-safety) • [Screenshots](#-interface-gallery) • [Installation](#-installation--quick-start) • [Viva Guide](docs/viva_preparation.md)
+[Features](#-key-features) • [Architecture](#-system-architecture) • [Empirical Performance](#-empirical-evaluation--clinical-safety) • [Interface Gallery](#-interface-gallery) • [Installation](#-installation--quick-start) • [Tech Stack](#-complete-technology-stack)
 
 </div>
 
@@ -149,26 +149,65 @@ Both neural network branches were trained on remote cloud clusters (Kaggle dual 
 | **NLP Regularization** | None (Overfitting) | **PEFT Layer Freezing (10-11)** | Retains MIMIC-III clinical embeddings while eliminating dataset memorization. |
 | **Out-of-Domain Filter**| None | **Margin Gating ($\tau=0.10$)** | Neutralizes closed-world Softmax hallucinations on healthy/diffuse skin. |
 | **Frontend State** | Ephemeral | **Persistent `st.session_state`** | Eliminates flash-and-vanish bugs during file downloads and audio playback. |
-| **Password Meter** | Python Buffer Lag | **0ms Client-Side JavaScript** | Real-time 4-segment visual meter evaluating keystrokes with 0ms latency. |
 | **Follow-up Reminders**| Theoretical | **Twilio Verify + APScheduler** | Bypasses Indian TRAI DLT Error 572006 to deliver live OTPs to `+91` numbers. |
 
 ---
 
 ## 🖼️ Interface Gallery
 
-*(Screenshots of the live, production-grade interface running in full multimodal mode)*
+Explore the live, production-grade interface across all core clinical workflows:
 
+### 1. User Onboarding & Cryptographic Authentication
 <div align="center">
 
-| Multimodal Consultation Screening | Specialist Consultation Narrative Card |
+| Registration & Dynamic Landing View | Returning User Login Authentication |
 | :---: | :---: |
-| *(Place `docs/screenshots/multimodal_screening.png` here)* | *(Place `docs/screenshots/consultation_narrative.png` here)* |
-| **0ms JavaScript Password Strength Meter** | **Longitudinal Health Trend Analytics** |
-| *(Place `docs/screenshots/password_meter.png` here)* | *(Place `docs/screenshots/health_trends.png` here)* |
+| ![User Registration](docs/screenshots/01_signup_landing.png) | ![Login View](docs/screenshots/03_login_view.png) |
+
+| Live 4-Segment Password Strength Meter (Evaluated in real-time) |
+| :---: |
+| ![Password Strength Meter](docs/screenshots/02_password_meter.png) |
 
 </div>
 
-> 💡 *To update screenshots: Capture high-resolution PNGs from the running web interface and place them in `docs/screenshots/`.*
+### 2. Primary Multimodal Diagnostic Consultation
+<div align="center">
+
+| Multimodal Screening Ingestion (Symptom History + Lesion Image) | Primary Clinical Consensus Card & Specialist Advisory |
+| :---: | :---: |
+| ![Multimodal Input](docs/screenshots/04_multimodal_screening_input.png) | ![Assessment Result](docs/screenshots/05_multimodal_assessment_result.png) |
+
+| Differential Diagnosis, Red-Flag Alerts, In-Browser TTS Audio & Multi-Format Report Export |
+| :---: |
+| ![Consultation Narrative and Export](docs/screenshots/06_clinical_narrative_and_export.png) |
+
+</div>
+
+### 3. Single-Modality Fallback Architecture (Graceful Degradation)
+<div align="center">
+
+| Clinical NLP-Only Ingestion (Text Provided, Image Omitted) | NLP-Only Screening Output (Bio_ClinicalBERT) |
+| :---: | :---: |
+| ![NLP Only Input](docs/screenshots/07_nlp_only_fallback_input.png) | ![NLP Only Result](docs/screenshots/08_nlp_only_assessment_result.png) |
+
+| DIP Computer Vision-Only Ingestion (Image Provided, Text Omitted) | DIP-Only Screening Output (ConvNeXt-Base) |
+| :---: | :---: |
+| ![DIP Only Input](docs/screenshots/09_dip_only_fallback_input.png) | ![DIP Only Result](docs/screenshots/10_dip_only_assessment_result.png) |
+
+</div>
+
+### 4. Diagnostic Analytics, Patient Telemetry & Security
+<div align="center">
+
+| 10-Class Softmax Probability Distribution & Ranked Table | 5-Session Longitudinal Health Trend Slope Analyzer |
+| :---: | :---: |
+| ![Probability Distribution](docs/screenshots/11_detailed_probability_distribution.png) | ![Health Trend Tracker](docs/screenshots/12_longitudinal_health_tracker.png) |
+
+| Sidebar Navigation, Demo Mode & Notification Channel Testing | Cryptographic Account Deletion Safeguard |
+| :---: | :---: |
+| ![Sidebar Settings](docs/screenshots/13_sidebar_settings_and_controls.png) | ![Account Deletion](docs/screenshots/14_account_deletion_security.png) |
+
+</div>
 
 ---
 
@@ -188,7 +227,7 @@ Both neural network branches were trained on remote cloud clusters (Kaggle dual 
 - **Enterprise-Grade Cryptography & Auth:**
   - Local SQLite relational database (`data/app.db`).
   - Passwords hashed using **PBKDF2-HMAC-SHA256** with unique 16-byte cryptographic salts and **100,000 iterations**.
-  - Dynamic, zero-latency 4-segment client-side JavaScript password meter.
+  - Dynamic, 4-segment visual password strength meter.
   - 30-day persistent session tokens for seamless auto-login.
 - **Longitudinal Health Trend Analyzer:**
   - Retains a 5-session rolling history calculating confidence score slopes over time to determine whether a lesion is *Stabilizing/Resolving*, *Worsening*, or *Morphologically Shifting*.
@@ -245,10 +284,8 @@ Project_DiseaseDiagnosis/
 │   └── notifications/
 │       └── notifier.py                # APScheduler daemon, Twilio Verify API, & Gmail SMTP
 │
-├── docs/                              # Academic documentation & visual evaluation artifacts
-│   ├── viva_preparation.md            # Complete 1,000-line viva defense guide & Q&A
-│   ├── DIP_Project_Report.md          # 10-chapter academic dissertation (DIP Course)
-│   ├── NLP_Project_Report.md          # 10-chapter academic dissertation (NLP Course)
+├── docs/                              # Visual evaluation artifacts & interface captures
+│   ├── screenshots/                   # Production application interface screenshots
 │   ├── dip_training_curves.png        # Training accuracy & loss trajectories
 │   ├── dip_confusion_matrix.png       # 1,000-sample visual confusion matrix
 │   ├── nlp_confusion_matrix.png       # 1,200-sample NLP confusion matrix
@@ -331,22 +368,13 @@ Access the application in your browser at `http://localhost:8501`.
 | **Deep Learning** | `torch 2.14.0`, `torchvision 0.29.0` | High-performance tensor computation, DDP distributed scaling, and ConvNeXt-Base backbone. |
 | **Transformers** | `transformers 5.17.0` (HuggingFace) | State-of-the-art Bio_ClinicalBERT architecture and WordPiece subword tokenization. |
 | **Computer Vision** | `opencv-python 5.0.0`, `pillow 12.3.0` | Fast C++ image decoding, aspect-ratio resizing, and pixel manipulation. |
-| **Web Frontend** | `streamlit 1.64.0`, HTML5, CSS3, JS | Rapid, responsive consultation interface with custom client-side JavaScript watchers. |
+| **Web Frontend** | `streamlit 1.64.0` | Rapid, responsive clinical consultation interface built in pure Python. |
 | **Acoustics** | `SpeechRecognition 3.10`, `gTTS 2.5` | Zero-latency speech-to-text and in-browser streaming text-to-speech audio playback. |
 | **Database & Security**| `sqlite3`, `hashlib` (PBKDF2-HMAC-SHA256) | Zero-configuration ACID relational storage with 100k-iteration cryptographic salting. |
 | **Background Tasks** | `apscheduler 3.10.4` | In-process daemon executing non-blocking scheduled patient follow-up notifications. |
 | **Communications** | `twilio`, `smtplib` | Multi-channel engagement via Twilio Verify API v2 (SMS) and Gmail SMTP (Email). |
 | **Document I/O** | `reportlab 4.0`, `python-docx 1.1`, `PyPDF2 3.0` | Hospital-grade clinical report exports and multi-format medical record ingestion. |
 | **Data Analytics** | `numpy 2.5.1`, `pandas 3.0.3`, `scikit-learn 1.9` | High-performance numerical arrays, dataset dataframes, and clinical confusion metrics. |
-
----
-
-## 📚 Academic Documentation & Research Reports
-
-This repository contains university-standard academic documentation formatted for Surana College BCA / Bangalore University curriculum:
-- 📖 [**Viva Voce Defense & Technical Guide (`docs/viva_preparation.md`)**](docs/viva_preparation.md): Complete 1,000-line modular guide covering every trial, error, formula, and question-answer script.
-- 📘 [**DIP Academic Project Report (`docs/DIP_Project_Report.md`)**](docs/DIP_Project_Report.md): 10-chapter academic dissertation detailing digital image processing, ConvNeXt depthwise convolutions, Kaggle DDP training, and metrics.
-- 📙 [**NLP Academic Project Report (`docs/NLP_Project_Report.md`)**](docs/NLP_Project_Report.md): 10-chapter academic dissertation detailing transformer theory, Bio_ClinicalBERT layer freezing, clinical dataset engineering, and evaluation.
 
 ---
 
