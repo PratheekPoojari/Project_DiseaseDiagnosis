@@ -93,6 +93,8 @@ if "demo_interval" not in st.session_state:
     st.session_state["demo_interval"] = 30
 if "symptom_input_text" not in st.session_state:
     st.session_state["symptom_input_text"] = ""
+if "nlp_input_version" not in st.session_state:
+    st.session_state["nlp_input_version"] = 0
 
 # Two-phase account deletion flow: False = idle, True = awaiting confirmation
 if "delete_account_pending" not in st.session_state:
@@ -221,7 +223,7 @@ if st.session_state["user"] is None:
 
     st.title("🩺 Skin Disease Diagnosis System")
     if st.session_state["demo_mode"]:
-        st.info("🧪 **Demo Mode Active** — notifications fire every 30 seconds per day.")
+        st.info(":material/science: **Demo Mode Active** — notifications fire every 30 seconds per day.")
 
     # Render Login first when user explicitly chose it; otherwise render Sign Up first.
     # Streamlit always activates the leftmost tab — swapping order is the only way to
@@ -230,9 +232,9 @@ if st.session_state["user"] is None:
     _want_login = (st.session_state.get("auth_mode") == "login")
 
     if _want_login:
-        tab_login, tab_signup = st.tabs(["🔑 Log In", "📝 Sign Up"])
+        tab_login, tab_signup = st.tabs([":material/login: Log In", ":material/person_add: Sign Up"])
     else:
-        tab_signup, tab_login = st.tabs(["📝 Sign Up", "🔑 Log In"])
+        tab_signup, tab_login = st.tabs([":material/person_add: Sign Up", ":material/login: Log In"])
 
     # ---- LOGIN TAB ----
     with tab_login:
@@ -477,7 +479,10 @@ if st.session_state["user"] is None:
 
         # Regular button instead of form_submit_button
         su_submitted = st.button(
-            "Create Account", use_container_width=True, type="primary",
+            "Create Account",
+            icon=":material/person_add:",
+            use_container_width=True,
+            type="primary",
             key="signup_btn",
         )
 
@@ -533,6 +538,12 @@ if st.session_state["user"] is None:
                     st.session_state["phone_verify_channel"] = "sms"
                     st.session_state["phone_verify_restricted"] = otp_res.get("trial_restricted", False)
                     st.session_state["phone_verify_message"] = otp_res.get("message", "")
+                    st.session_state["phone_verify_otp_sent"] = otp_res.get("success", False)
+
+                    # Initialize rate limit counters so the verification view recognizes the sent OTP
+                    if otp_res.get("success"):
+                        st.session_state["otp_send_attempts"] = 1
+                        st.session_state["otp_first_attempt_time"] = time.time()
 
                     st.rerun()
                 else:
@@ -589,7 +600,7 @@ if st.session_state.get("phone_verify_pending") and st.session_state.get("user")
         if _attempts > 0:
             st.caption(f"⚠️ {_remaining_attempts} of {_OTP_MAX_ATTEMPTS} OTP sends remaining this hour.")
 
-        if st.button("💬 Send SMS OTP", use_container_width=True, type="primary", disabled=_rate_limited):
+        if st.button("Send SMS OTP", icon=":material/sms:", use_container_width=True, type="primary", disabled=_rate_limited):
             with st.spinner("Dispatching SMS OTP..."):
                 res = send_verification_otp(_phone_for_display, channel="sms")
 
@@ -635,7 +646,7 @@ if st.session_state.get("phone_verify_pending") and st.session_state.get("user")
 
     action_c1, action_c2 = st.columns([1, 1])
     with action_c1:
-        if st.button("✅ Verify OTP & Activate SMS", type="primary", use_container_width=True, key="verify_otp_submit_btn"):
+        if st.button("Verify OTP & Activate SMS", icon=":material/verified:", type="primary", use_container_width=True, key="verify_otp_submit_btn"):
             if not otp_in.strip():
                 st.error("Please enter the 6-digit code.")
             elif not _otp_sent:
@@ -657,7 +668,7 @@ if st.session_state.get("phone_verify_pending") and st.session_state.get("user")
                     st.error(f"❌ {verify_res['message']}")
 
     with action_c2:
-        if st.button("▶️ Continue to App (Skip Verification)", use_container_width=True, key="post_signup_continue"):
+        if st.button("Continue to App (Skip Verification)", icon=":material/arrow_forward:", use_container_width=True, key="post_signup_continue"):
             st.session_state["phone_verify_pending"]   = False
             st.session_state["phone_verify_code"]      = None
             st.session_state["phone_verify_message"]   = ""
@@ -678,11 +689,11 @@ user = st.session_state["user"]
 # SIDEBAR — Settings & Demo Mode Controls
 # ==============================================================================
 with st.sidebar:
-    st.header("⚙️ Settings")
+    st.header("Settings", icon=":material/settings:")
 
     # Demo mode toggle
     st.session_state["demo_mode"] = st.toggle(
-        "🧪 Demo Mode (fast notifications)",
+        ":material/science: Demo Mode (fast notifications)",
         value=st.session_state["demo_mode"],
         help="When enabled, follow-up notifications fire in seconds instead of days."
     )
@@ -707,7 +718,7 @@ with st.sidebar:
     # Manual notification testing
     st.markdown("**Outbound Channel Test**")
     st.caption("Verify your Email & SMS delivery instantly:")
-    if st.button("🚀 Test Notifications Now", use_container_width=True, key="sb_test_notif"):
+    if st.button("Test Notifications Now", icon=":material/notifications_active:", use_container_width=True, key="sb_test_notif"):
         with st.spinner("Testing channels..."):
             # Pass the current diagnosis if one exists; otherwise None → neutral delivery test
             cond = None
@@ -735,7 +746,7 @@ with st.sidebar:
 
     # Clear diagnosis button
     if st.session_state["current_diagnosis"] is not None:
-        if st.button("🗑️ Clear Current Results", use_container_width=True):
+        if st.button("Clear Current Results", icon=":material/restart_alt:", use_container_width=True):
             st.session_state["current_diagnosis"] = None
             st.session_state["last_symptom_text"] = ""
             st.session_state["last_image_used"] = False
@@ -744,7 +755,7 @@ with st.sidebar:
     st.divider()
 
     # Logout
-    if st.button("🚪 Logout", use_container_width=True):
+    if st.button("Logout", icon=":material/logout:", use_container_width=True):
         logout(user["id"])
         st.session_state["user"] = None
         st.session_state["current_diagnosis"] = None
@@ -758,7 +769,8 @@ with st.sidebar:
     # Phase 1: idle — show the trigger button
     if not st.session_state["delete_account_pending"]:
         if st.button(
-            "🗑️ Delete Account",
+            "Delete Account",
+            icon=":material/delete_forever:",
             use_container_width=True,
             type="secondary",
             key="sb_delete_account_trigger",
@@ -829,7 +841,7 @@ st.title("🩺 Multimodal Skin Disease Diagnosis System")
 
 if st.session_state["demo_mode"]:
     st.info(
-        f"🧪 **Demo Mode Active** — follow-up notifications fire every "
+        f":material/science: **Demo Mode Active** — follow-up notifications fire every "
         f"**{st.session_state['demo_interval']}s** per \"day\". "
         f"Adjust in the sidebar."
     )
@@ -884,7 +896,7 @@ if history:
 col1, col2 = st.columns(2)
 
 with col1:
-    st.header("📝 1. Symptom Description")
+    st.header("1. Symptom Description", icon=":material/edit_note:")
     st.caption("Enter patient symptoms below. Use the toolbar icons to dictate via voice or attach medical files.")
 
     # Toolbar row: Taskbar with label, mic icon popover, and '+' attach file popover
@@ -939,14 +951,17 @@ with col1:
                 except Exception as e:
                     st.error(f"Error parsing file: {e}")
 
-    # Main text input area on the same taskbar view
+    # Main text input area.
+    # Key includes a version counter — incrementing the counter on Clear creates a brand-new
+    # widget, which means value="" is respected (Streamlit only uses value= on first render
+    # of a given key; for existing keys it ignores value= and reads from session_state instead).
     symptom_text = st.text_area(
         "Patient Symptoms",
         value=st.session_state["symptom_input_text"],
         height=160,
         placeholder="E.g., I have intensely itchy, red scaly plaques on my elbows and scalp that have been peeling for three weeks...",
         label_visibility="collapsed",
-        key="symptom_text_widget",
+        key=f"symptom_text_widget_{st.session_state['nlp_input_version']}",
     )
     # Synchronize manual edits back to session state
     st.session_state["symptom_input_text"] = symptom_text
@@ -955,18 +970,19 @@ with col1:
     meta_c1, meta_c2 = st.columns([3, 1])
     with meta_c1:
         word_count = len(symptom_text.split()) if symptom_text.strip() else 0
-        st.caption(f"📝 {word_count} words entered | Clinical NLP ready")
+        st.caption(f":material/description: {word_count} words entered | Clinical NLP ready")
     with meta_c2:
         if symptom_text.strip():
-            if st.button("🗑️ Clear", key="clear_symptom_btn", use_container_width=True):
+            if st.button("Clear", icon=":material/delete:", key="clear_symptom_btn", use_container_width=True):
                 st.session_state["symptom_input_text"] = ""
+                st.session_state["nlp_input_version"] += 1  # new key → new widget → value="" honoured
                 st.rerun()
 
 with col2:
-    st.header("📸 2. Affected Skin Area")
+    st.header("2. Affected Skin Area", icon=":material/photo_camera:")
     st.caption("Upload a high-resolution photograph or capture one live using your camera.")
 
-    tab_upload, tab_camera = st.tabs(["🖼️ Upload Photograph", "📷 Camera Capture"])
+    tab_upload, tab_camera = st.tabs([":material/image: Upload Photograph", ":material/photo_camera: Camera Capture"])
     img_from_upload = None
     img_from_camera = None
 
@@ -1029,7 +1045,8 @@ center_col = st.columns([1, 2, 1])[1]
 
 with center_col:
     run_clicked = st.button(
-        "🔍 Run Multimodal Diagnosis",
+        "Run Multimodal Diagnosis",
+        icon=":material/medical_services:",
         use_container_width=True,
         type="primary"
     )
@@ -1187,7 +1204,7 @@ if diagnosis is not None:
             f"via **Email** and **SMS** to **{user['email']}** and **{user['phone']}**."
         )
 
-        if st.button("🚀 Send Test Follow-Up Now (Email & SMS)", use_container_width=True, key="res_test_notif"):
+        if st.button("Send Test Follow-Up Now (Email & SMS)", icon=":material/send:", use_container_width=True, key="res_test_notif"):
             with st.spinner("Dispatching live notifications..."):
                 test_res = trigger_immediate_test_notification(
                     user_name=user["full_name"],
@@ -1211,7 +1228,7 @@ if diagnosis is not None:
         # ==========================================================
         # EXPORT / DOWNLOAD
         # ==========================================================
-        st.markdown("### 📥 Download Report")
+        st.markdown("### :material/download: Download Report")
         st.caption("Save your diagnosis result in your preferred format.")
 
         saved_symptom = st.session_state["last_symptom_text"]
@@ -1220,7 +1237,8 @@ if diagnosis is not None:
 
         with dl_col1:
             st.download_button(
-                label="⬇️ TXT",
+                label="TXT",
+                icon=":material/description:",
                 data=export_txt(diagnosis, saved_symptom),
                 file_name=f"{fname_base}.txt",
                 mime="text/plain",
@@ -1228,7 +1246,8 @@ if diagnosis is not None:
             )
         with dl_col2:
             st.download_button(
-                label="⬇️ CSV",
+                label="CSV",
+                icon=":material/table_chart:",
                 data=export_csv(diagnosis, saved_symptom),
                 file_name=f"{fname_base}.csv",
                 mime="text/csv",
@@ -1236,7 +1255,8 @@ if diagnosis is not None:
             )
         with dl_col3:
             st.download_button(
-                label="⬇️ PDF",
+                label="PDF",
+                icon=":material/picture_as_pdf:",
                 data=export_pdf(diagnosis, saved_symptom),
                 file_name=f"{fname_base}.pdf",
                 mime="application/pdf",
@@ -1244,7 +1264,8 @@ if diagnosis is not None:
             )
         with dl_col4:
             st.download_button(
-                label="⬇️ DOCX",
+                label="DOCX",
+                icon=":material/article:",
                 data=export_docx(diagnosis, saved_symptom),
                 file_name=f"{fname_base}.docx",
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
